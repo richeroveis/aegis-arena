@@ -1,0 +1,192 @@
+{
+  "network": "studionet",
+  "chain_id": 61999,
+  "rpc": "https://studio.genlayer.com/api",
+  "contract_address": "0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd",
+  "explorer_url": "https://explorer-studio.genlayer.com/address/0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd",
+  "deploy_tx": "0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe",
+  "deploy_status": "FINALIZED",
+  "deploy_consensus_result": "MAJORITY_AGREE",
+  "creator_address": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+  "peer_address": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+  "sha256": {
+    "local_file": "867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573",
+    "deploy_payload": "867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573",
+    "onchain_explorer_contract_code": "867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573",
+    "three_way_match": true,
+    "explorer_deployment_tx": "0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe"
+  },
+  "transactions": [
+    {
+      "label": "deploy",
+      "function": "__init__",
+      "tx_hash": "0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "contract_address": "0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd"
+    },
+    {
+      "label": "create_tournament#1",
+      "function": "create_tournament",
+      "tx_hash": "0xe5b5e85cd372b2aceff837517f2768c8c71148e3ba67c99bbf12b902fa115bf0",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "create_tournament#2",
+      "function": "create_tournament",
+      "tx_hash": "0x61b03b5140ec4f45dd9be67d690794f16ff9f6466633ad8ae3b0d1a3d7f5e1b4",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "submit_tactic#1 (Valkyrie)",
+      "function": "submit_tactic",
+      "tx_hash": "0xcd9ced621eba7e5a869bd47747a42c5e7b561e0873ac5f31b11b9e65a4514f78",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "submit_tactic#2 (Nomad, peer signer)",
+      "function": "submit_tactic",
+      "tx_hash": "0xedb672890e1d400a0b9a79ed80dd395d2edc323bc36d0a8828d37d1bba8f9611",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "score_tactic_deterministic#1 (creator rubric)",
+      "function": "score_tactic_deterministic",
+      "tx_hash": "0xca926e77261d3ffdc32bae80ca80d320048cb289f591844a654e5a302ddc2135",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "endorse_submission#1 (peer signer)",
+      "function": "endorse_submission",
+      "tx_hash": "0x34a28dc64ce2c2a431c1f6a1bf781c1d06e6871dc476e60c5a7f592ec2e9ce1f",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "post_arena_comment#1 (peer signer)",
+      "function": "post_arena_comment",
+      "tx_hash": "0x16b48207b53e8b20ecc0bf36441b318cbcc537b10db9d4639f296cb8cfd809d7",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "rollback_check cancel_tournament#1 (has entries, must not take effect)",
+      "function": "cancel_tournament",
+      "tx_hash": "0x88a143c2009fb859410bd555d9a3c31857cec28207c8789f76dd0fd8761dfada",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null,
+      "expected": "no state change; tournament stays OPEN"
+    }
+  ],
+  "rollback_check": {
+    "tx": "0x88a143c2009fb859410bd555d9a3c31857cec28207c8789f76dd0fd8761dfada",
+    "finalized": "FINALIZED",
+    "left_tournament_open": true
+  },
+  "final_state": {
+    "arena_stats": {
+      "cancelled": 0,
+      "evaluated_submissions": 1,
+      "open": 2,
+      "settled": 0,
+      "total_comments": 1,
+      "total_endorsements": 1,
+      "total_submissions": 2,
+      "total_tournaments": 2
+    },
+    "tournaments": [
+      {
+        "best_score": 81,
+        "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+        "current_leader": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+        "entry_count": 1,
+        "mandatory_fact_token": "LOCKDOWN PROTOCOL",
+        "prize_pool_points": 8000,
+        "reference_url": "https://en.wikipedia.org/wiki/Cybersecurity",
+        "status": "OPEN",
+        "title": "Red Team Raid: Lockdown Protocol",
+        "tournament_id": 1,
+        "winner": "0x0000000000000000000000000000000000000000"
+      },
+      {
+        "best_score": 33,
+        "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+        "current_leader": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "entry_count": 1,
+        "mandatory_fact_token": "OWASP",
+        "prize_pool_points": 6000,
+        "reference_url": "https://owasp.org/www-project-top-ten/",
+        "status": "OPEN",
+        "title": "Blue Team Hardening: Top-Ten Reversal",
+        "tournament_id": 2,
+        "winner": "0x0000000000000000000000000000000000000000"
+      }
+    ],
+    "tournament_1_submissions": [
+      {
+        "ai_verdict_score": 45,
+        "deterministic_score": 36,
+        "endorsements": 1,
+        "evaluated": true,
+        "judge_rationale": "Grounds every step in defense-in-depth from the reference and keeps the LOCKDOWN PROTOCOL anchor load-bearing. Minor gap: no rollback plan for the jump host.",
+        "moniker": "Valkyrie",
+        "player": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+        "submission_id": 1,
+        "tactic_payload": "Stage one: micro-segment the clinical VLAN and enforce zero-trust identity at the edge before any lateral movement. Anchor the whole plan on LOCKDOWN PROTOCOL so telemetry stays up while attackers are boxed in. Stage two: deploy canary hosts that alert on any unusual east-west flow. Stage three: rotate all service credentials and cut a hardened jump-host path for the IR team. Every action maps to defense-in-depth from the reference.",
+        "total_score": 83,
+        "tournament_id": 1
+      }
+    ],
+    "tournament_2_submissions": [
+      {
+        "ai_verdict_score": 0,
+        "deterministic_score": 33,
+        "endorsements": 0,
+        "evaluated": false,
+        "judge_rationale": "",
+        "moniker": "Nomad",
+        "player": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "submission_id": 2,
+        "tactic_payload": "Prioritize OWASP A01 broken access control and A02 cryptographic failures first for the fintech API. Enforce deny-by-default object authorization, then move secrets to a managed KMS with short-lived tokens. Next, harden A03 injection with parameterized queries and strict server-side validation. Map OWASP controls to release-gate tests so regressions cannot ship.",
+        "total_score": 33,
+        "tournament_id": 2
+      }
+    ],
+    "tournament_1_comments": [
+      {
+        "author": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "author_moniker": "Nomad",
+        "comment_id": 1,
+        "message": "Strong segmentation-first ordering, though I would front-load the telemetry continuity risk.",
+        "stance": "ANALYSIS",
+        "submission_id": 1,
+        "tournament_id": 1
+      }
+    ],
+    "leaderboard": [
+      {
+        "address": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+        "points": 61,
+        "wins": 0
+      },
+      {
+        "address": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "points": 14,
+        "wins": 0
+      }
+    ]
+  }
+}
