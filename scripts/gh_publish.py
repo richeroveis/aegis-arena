@@ -108,6 +108,24 @@ def enable_pages():
     return False
 
 
+def ci_status():
+    import subprocess
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    for _ in range(40):
+        s, d = api("GET", f"/repos/{OWNER}/{REPO}/commits/{sha}/check-runs")
+        runs = d.get("check_runs", [])
+        if runs:
+            concl = [(r.get("name"), r.get("status"), r.get("conclusion")) for r in runs]
+            for name, st, cc in concl:
+                print(f"{name}: {st} {cc or ''}")
+            if all(st == "completed" for _, st, _ in concl):
+                return all(cc == "success" for _, _, cc in concl)
+        else:
+            print("no check runs yet for", sha[:8])
+        time.sleep(15)
+    return False
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "whoami"
     if cmd == "whoami":
@@ -116,5 +134,7 @@ if __name__ == "__main__":
         sys.exit(0 if create_repo() else 1)
     elif cmd == "enable-pages":
         sys.exit(0 if enable_pages() else 1)
+    elif cmd == "ci-status":
+        sys.exit(0 if ci_status() else 1)
     else:
         sys.exit("unknown command")
