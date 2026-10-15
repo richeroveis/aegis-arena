@@ -17,10 +17,15 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+video-raw/
 
 # Logs
 *.log
 npm-debug.log*
+
+# Demo video assets stay local (deployed via gh-pages dist, never tracked)
+*.mp4
+*.webm
 
 # OS / editor
 .DS_Store

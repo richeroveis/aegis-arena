@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BattleRoom } from "./components/BattleRoom";
 import { CreateTournamentModal, type TournamentDraft } from "./components/CreateTournamentModal";
 import { Leaderboard } from "./components/Leaderboard";
@@ -44,6 +44,9 @@ export default function App() {
   const [hash, setHash] = useState<string | undefined>(undefined);
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "bad"; text: string; hash?: string } | null>(null);
+  // Guards the stepper reset: a finished write must not clear the stepper of
+  // a newer write that started in the meantime.
+  const writeSeq = useRef(0);
 
   const loadDetail = useCallback(async (id: number) => {
     const [t, subs, com] = await Promise.all([
@@ -57,15 +60,21 @@ export default function App() {
   }, []);
 
   const refresh = useCallback(async () => {
-    try {
-      const [st, ts, lb] = await Promise.all([readStats(), readTournaments(), readLeaderboard()]);
-      setStats(st);
-      setTournaments(ts ?? []);
-      setLeaderboard(lb ?? []);
-      setOnline(true);
-    } catch {
-      setOnline(false);
+    // studionet occasionally drops a single request; retry before showing
+    // the offline badge so one blip does not look like an outage.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const [st, ts, lb] = await Promise.all([readStats(), readTournaments(), readLeaderboard()]);
+        setStats(st);
+        setTournaments(ts ?? []);
+        setLeaderboard(lb ?? []);
+        setOnline(true);
+        return;
+      } catch {
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+      }
     }
+    setOnline(false);
   }, []);
 
   useEffect(() => {
@@ -95,6 +104,7 @@ export default function App() {
       args: (string | number | bigint)[],
       successMsg: string,
       after?: () => Promise<void> | void,
+      options?: { leaderOnly?: boolean },
     ) => {
       const client = wallet.getWriteClient();
       if (!client) {
@@ -103,10 +113,11 @@ export default function App() {
       }
       setBusy(true);
       setHash(undefined);
+      const seq = ++writeSeq.current;
       const res = await runWrite(client, functionName, args, (s, h) => {
         setStage(s);
         if (h) setHash(h);
-      });
+      }, options);
       setBusy(false);
       if (res.ok) {
         setToast({ kind: "ok", text: successMsg, hash: res.hash });
@@ -116,13 +127,16 @@ export default function App() {
       } else {
         setToast({ kind: "bad", text: res.message ?? "Transaction did not apply.", hash: res.hash });
       }
-      window.setTimeout(() => setStage("idle"), 6000);
+      window.setTimeout(() => {
+        if (writeSeq.current === seq) setStage("idle");
+      }, 6000);
     },
     [wallet, refresh, loadDetail, selectedId],
   );
 
   const onSubmitTactic = (moniker: string, payload: string) =>
-    doWrite("submit_tactic", [selectedId ?? 0, moniker, payload], "Tactic submitted on-chain.");
+    // Purely deterministic scoring, so leader-only for a fast settlement.
+    doWrite("submit_tactic", [selectedId ?? 0, moniker, payload], "Tactic submitted on-chain.", undefined, { leaderOnly: true });
 
   const onEvaluate = (sid: number) =>
     doWrite("evaluate_tactic_live", [sid], "Live AI consensus recorded.");
