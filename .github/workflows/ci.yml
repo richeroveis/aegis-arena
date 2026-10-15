@@ -18,6 +18,11 @@ jobs:
         run: pip install -r requirements.txt
       - name: Lint contract
         run: genvm-lint check contracts/aegis_arena.py
+      - name: Pre-seed GenVM SDK for direct tests
+        # gltest 0.29.2 needs the genvm-universal.tar.xz asset, which the newest
+        # releases dropped. v0.2.16 is the latest release that ships it and it
+        # contains the runner hash pinned in contracts/aegis_arena.py.
+        run: python -c "from gltest.direct.sdk_loader import download_artifacts; download_artifacts('v0.2.16')"
       - name: Direct tests (integration auto-skipped without RUN_STUDIONET_INTEGRATION)
         run: pytest tests/ -q
 
