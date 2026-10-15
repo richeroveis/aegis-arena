@@ -17,6 +17,17 @@ scored evaluation, a community endorsement from a second signer, and an on-chain
 so a reviewer opening the live site immediately sees a populated arena fetched from
 studionet.
 
+## Deployment provenance
+
+- Deployed contract commit: `582fc0af051294350cbf8dc2c526686cce79c0ef` (tag `studionet-v1`)
+- Contract file sha256, identical across local file, deploy payload, on-chain explorer code
+  and the git blob: `867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573`
+- Deploy tx: `0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe`
+- Per-transaction on-chain evidence: `evidence/studionet_deployment.json`
+
+The contract source at the tagged commit is byte-for-byte the source deployed to studionet;
+later commits only add CI and documentation and do not touch `contracts/aegis_arena.py`.
+
 ## Why GenLayer
 
 AegisArena needs consensus for the part that is subjective and externally sourced: judging
