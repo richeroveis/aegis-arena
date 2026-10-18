@@ -8,25 +8,51 @@ GenLayer validators verify each outcome against real web sources using an LLM co
 equivalence principle, and the community can endorse and discuss battles entirely on-chain.
 
 - Live site: https://richeroveis.github.io/aegis-arena/
-- Contract (studionet, chain id 61999): `0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd`
-- Explorer: https://explorer-studio.genlayer.com/address/0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd
-- Deploy tx: `0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe`
+- Contract (studionet, chain id 61999): `0x09a0D07800547074a7D1f7c48B96208ee653d5DA`
+- Explorer: https://explorer-studio.genlayer.com/address/0x09a0D07800547074a7D1f7c48B96208ee653d5DA
+- Deploy tx: `0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6`
 
-The arena is already seeded on-chain with two active tournaments, ranked submissions, a
-scored evaluation, a community endorsement from a second signer, and an on-chain comment,
-so a reviewer opening the live site immediately sees a populated arena fetched from
+The arena is already seeded on-chain with two tournaments: one live-evaluated
+and SETTLED to its verified on-chain leader, and one still OPEN whose settlement
+is correctly blocked because none of its entries finished the live consensus
+evaluation. It also has ranked submissions, a real validator-consensus verdict,
+a community endorsement from a second signer, and an on-chain comment, so a
+reviewer opening the live site immediately sees a populated arena fetched from
 studionet.
+
+## Resolution invariants (steward review "zoefunds")
+
+- Mandatory live consensus: a submission can only lead or win a tournament after
+  it finishes `evaluate_tactic_live`, the neutral live GenLayer consensus path.
+  `settle_tournament` reverts with
+  `"cannot settle tournament without a live-evaluated winning submission"` if the
+  winning submission was never live-evaluated.
+- No creator/owner bypass: the former `score_tactic_deterministic` method is
+  removed. Only `evaluate_tactic_live` can mark a submission evaluated. Its LLM
+  verdict is snapped onto a fixed 5-point grid (0, 5, 10, ..., 60) and validators
+  must agree on the exact quantized integer.
+- One consistent score: the stored leader, `best_score`, and the settlement
+  winner always follow `min(100, deterministic_score + ai_verdict_score +
+  endorsements * 2)`, recomputed by a single `_sync_leader_if_evaluated` helper
+  on every evaluation and endorsement, and again inside settlement.
+- Frozen after terminal status: endorsements that would change scores revert once
+  a tournament is `SETTLED` or `CANCELLED`.
 
 ## Deployment provenance
 
-- Deployed contract commit: `582fc0af051294350cbf8dc2c526686cce79c0ef` (tag `studionet-v1`)
-- Contract file sha256, identical across local file, deploy payload, on-chain explorer code
-  and the git blob: `867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573`
-- Deploy tx: `0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe`
-- Per-transaction on-chain evidence: `evidence/studionet_deployment.json`
+- Deployed contract tag: `studionet-v1` (points at the commit that contains this
+  exact `contracts/aegis_arena.py`).
+- Contract file sha256, identical across local file, deploy payload, on-chain
+  explorer code and the git blob:
+  `fbf039ac7a8d39eb9bc8ade29dea5ee2cc488c8873501d860b6ab74215aabb9e`
+- Deploy tx: `0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6`
+- Per-transaction on-chain evidence, including the live-consensus evaluation,
+  the endorsement leader/score sync and both negative rollbacks:
+  `evidence/studionet_deployment.json`
 
-The contract source at the tagged commit is byte-for-byte the source deployed to studionet;
-later commits only add CI and documentation and do not touch `contracts/aegis_arena.py`.
+The contract source at the tagged commit is byte-for-byte the source deployed to
+studionet; later commits only add CI and documentation and do not touch
+`contracts/aegis_arena.py`.
 
 ## Why GenLayer
 
@@ -55,12 +81,11 @@ Persistent structures: `Tournament`, `BattleSubmission`, `ArenaComment`.
 Write methods:
 
 - `create_tournament(title, challenge_brief, reference_url, mandatory_fact_token, prize_pool_points)`
-- `submit_tactic(tournament_id, moniker, tactic_payload)` (enforces the mandatory fact token and a deterministic 0..40 score)
-- `evaluate_tactic_live(submission_id)` (validators fetch the reference URL and run `gl.eq_principle.prompt_comparative` for a 0..60 verdict)
-- `score_tactic_deterministic(submission_id, rubric_bonus, rationale)` (creator or owner, exact-consensus fallback)
-- `endorse_submission(submission_id)` (no self-endorsement, one per address, capped +2 bonus)
+- `submit_tactic(tournament_id, moniker, tactic_payload)` (enforces the mandatory fact token and a deterministic 0..40 score; never takes the lead until live evaluation)
+- `evaluate_tactic_live(submission_id)` (the only path that marks a submission evaluated; validators fetch the reference URL and run `gl.eq_principle.prompt_comparative` for a 5-point-grid verdict)
+- `endorse_submission(submission_id)` (OPEN tournaments only, no self-endorsement, one per address, capped +2 bonus, keeps the leader in lockstep)
 - `post_arena_comment(tournament_id, submission_id, author_moniker, message, stance)`
-- `settle_tournament(tournament_id)` (creator or owner, pays the on-chain leader)
+- `settle_tournament(tournament_id)` (creator or owner; requires a live-evaluated winner and pays the on-chain leader)
 - `cancel_tournament(tournament_id)` (creator or owner, empty tournaments only)
 
 View methods: `get_tournament`, `get_all_tournaments`, `get_tournament_submissions`,
@@ -69,8 +94,8 @@ View methods: `get_tournament`, `get_all_tournaments`, `get_tournament_submissio
 ## Scoring model
 
 - Deterministic 0..40: mandatory-token emphasis, length efficiency, and structural richness.
-- AI verdict 0..60: only through validator consensus on the live reference source.
-- Total 0..100, clamped. Endorsements add a capped community bonus.
+- AI verdict 0..60 on a 5-point grid: only through validator consensus on the live reference source, with validators required to agree on the exact quantized integer.
+- Total 0..100, clamped: `min(100, deterministic + ai_verdict + endorsements * 2)`. Endorsements add a capped community bonus, and the ranking score, stored leader and settlement winner all follow this one invariant.
 
 ## Frontend
 
@@ -83,7 +108,10 @@ View methods: `get_tournament`, `get_all_tournaments`, `get_tournament_submissio
 - Tournament explorer and live battle room with ranked submissions.
 - Tactical submission console with a real-time pre-flight check (mandatory-token presence and
   character bounds) and a Quick Fill demo tactic.
-- Per-submission "Trigger Live AI Consensus" and "Endorse" actions.
+- Per-submission actions: a clear "Live Consensus Evaluated (Eligible to Win)" versus
+  "Awaiting Live AI Evaluation" badge, a "Trigger Live AI Consensus" button that is only
+  enabled for OPEN tournaments still awaiting evaluation, and an "Endorse" button that is
+  disabled once a tournament is SETTLED or CANCELLED.
 - On-chain discussion feed with stance badges and a comment composer.
 - Create-tournament modal with a preset scenario loader.
 - A live transaction lifecycle stepper: Signing, Broadcast to Studionet, Validator Consensus,
@@ -93,7 +121,7 @@ View methods: `get_tournament`, `get_all_tournaments`, `get_tournament_submissio
 
 ```
 contracts/aegis_arena.py        the Intelligent Contract
-tests/test_aegis_arena_direct.py  50 direct-mode tests
+tests/test_aegis_arena_direct.py  55 direct-mode tests
 tests/test_aegis_arena_integration.py  live studionet consensus tests
 tests/conftest.py               Windows os.unlink shim for direct mode
 scripts/deploy_studionet.py     deploy + seed + evidence collection
@@ -124,10 +152,12 @@ cd frontend && npm install && npm run build
 
 See `docs/adversarial-review.md`. Highlights: strict input bounds with floors and ceilings,
 rejection (not clamping) of out-of-range values, self-endorsement and duplicate-endorsement
-guards, prompt-injection defusing of all fetched and creator-supplied text, single-shot
-scoring, and settle/cancel guards that are mutually exclusive by status and entry count. The
-non-custodial design means the contract holds no external funds; points are a reputation
-ledger, and settlement transfers prize points to the on-chain leader only.
+guards, prompt-injection defusing of all fetched and creator-supplied text, a single-shot
+consensus scoring path with a fixed 5-point verdict grid, a mandatory live-evaluation gate
+before settlement, one shared leader/settlement score invariant, and endorse/settle/cancel
+guards that freeze scores once a tournament leaves OPEN. The non-custodial design means the
+contract holds no external funds; points are a reputation ledger, and settlement transfers
+prize points to the live-evaluated on-chain leader only.
 
 ## Tech stack
 

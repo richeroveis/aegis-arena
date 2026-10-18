@@ -2,33 +2,33 @@
   "network": "studionet",
   "chain_id": 61999,
   "rpc": "https://studio.genlayer.com/api",
-  "contract_address": "0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd",
-  "explorer_url": "https://explorer-studio.genlayer.com/address/0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd",
-  "deploy_tx": "0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe",
+  "contract_address": "0x09a0D07800547074a7D1f7c48B96208ee653d5DA",
+  "explorer_url": "https://explorer-studio.genlayer.com/address/0x09a0D07800547074a7D1f7c48B96208ee653d5DA",
+  "deploy_tx": "0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6",
   "deploy_status": "FINALIZED",
   "deploy_consensus_result": "MAJORITY_AGREE",
   "creator_address": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
-  "peer_address": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+  "peer_address": "0x54A899304A7ABf319C7dB9FcD5132807D0802450",
   "sha256": {
-    "local_file": "867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573",
-    "deploy_payload": "867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573",
-    "onchain_explorer_contract_code": "867a2cc317a1a226012b8efc58e74b5afccafda3d25862a17e45ae35d01a3573",
+    "local_file": "fbf039ac7a8d39eb9bc8ade29dea5ee2cc488c8873501d860b6ab74215aabb9e",
+    "deploy_payload": "fbf039ac7a8d39eb9bc8ade29dea5ee2cc488c8873501d860b6ab74215aabb9e",
+    "onchain_explorer_contract_code": "fbf039ac7a8d39eb9bc8ade29dea5ee2cc488c8873501d860b6ab74215aabb9e",
     "three_way_match": true,
-    "explorer_deployment_tx": "0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe"
+    "explorer_deployment_tx": "0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6"
   },
   "transactions": [
     {
       "label": "deploy",
       "function": "__init__",
-      "tx_hash": "0x6db4e0d330767739a2f81e0447b1143b4318ea303ca15910ab55716c1764e8fe",
+      "tx_hash": "0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
-      "contract_address": "0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd"
+      "contract_address": "0x09a0D07800547074a7D1f7c48B96208ee653d5DA"
     },
     {
       "label": "create_tournament#1",
       "function": "create_tournament",
-      "tx_hash": "0xe5b5e85cd372b2aceff837517f2768c8c71148e3ba67c99bbf12b902fa115bf0",
+      "tx_hash": "0x46e219ffdecb91843da7c4fe3a8c02c81f05882aaf2ab8fe05e4aed08ff368bd",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
@@ -36,31 +36,31 @@
     {
       "label": "create_tournament#2",
       "function": "create_tournament",
-      "tx_hash": "0x61b03b5140ec4f45dd9be67d690794f16ff9f6466633ad8ae3b0d1a3d7f5e1b4",
+      "tx_hash": "0xdeff08804ce0daf972f6a345a49c22908c781a763168888c27555f144190a515",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
     },
     {
-      "label": "submit_tactic#1 (Valkyrie)",
+      "label": "submit_tactic#1 (Valkyrie, live tournament)",
       "function": "submit_tactic",
-      "tx_hash": "0xcd9ced621eba7e5a869bd47747a42c5e7b561e0873ac5f31b11b9e65a4514f78",
+      "tx_hash": "0xc5525b695931a1c1a583e210c9663137b02798c65ef40bbb699ac9a313e04712",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
     },
     {
-      "label": "submit_tactic#2 (Nomad, peer signer)",
+      "label": "submit_tactic#2 (Nomad, peer signer, unevaluated tournament)",
       "function": "submit_tactic",
-      "tx_hash": "0xedb672890e1d400a0b9a79ed80dd395d2edc323bc36d0a8828d37d1bba8f9611",
+      "tx_hash": "0x04ae42819f798173e5ff45b81e55ad9f68b3644eea5316aa9855dd613fc09a06",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
     },
     {
-      "label": "score_tactic_deterministic#1 (creator rubric)",
-      "function": "score_tactic_deterministic",
-      "tx_hash": "0xca926e77261d3ffdc32bae80ca80d320048cb289f591844a654e5a302ddc2135",
+      "label": "evaluate_tactic_live#1 (full validator consensus, attempt 1)",
+      "function": "evaluate_tactic_live",
+      "tx_hash": "0x2366cdff23ce0e41cfbc8ef82d4cf50821ba26de86525263f51dc3f5b56d4c1d",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
@@ -68,7 +68,7 @@
     {
       "label": "endorse_submission#1 (peer signer)",
       "function": "endorse_submission",
-      "tx_hash": "0x34a28dc64ce2c2a431c1f6a1bf781c1d06e6871dc476e60c5a7f592ec2e9ce1f",
+      "tx_hash": "0xe0a23d5e173bb71a692e1330749229191be2dbe44acad11556aefbf2daa7990e",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
@@ -76,32 +76,66 @@
     {
       "label": "post_arena_comment#1 (peer signer)",
       "function": "post_arena_comment",
-      "tx_hash": "0x16b48207b53e8b20ecc0bf36441b318cbcc537b10db9d4639f296cb8cfd809d7",
+      "tx_hash": "0xa3f8ca4e43cce00b0c64ffda678e8416f4e15d925821041fda3c8b5a1d293a58",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null
     },
     {
-      "label": "rollback_check cancel_tournament#1 (has entries, must not take effect)",
-      "function": "cancel_tournament",
-      "tx_hash": "0x88a143c2009fb859410bd555d9a3c31857cec28207c8789f76dd0fd8761dfada",
+      "label": "rollback_settle#2 (no live-evaluated winner, must revert)",
+      "function": "settle_tournament",
+      "tx_hash": "0xb5bb184f11dde49bd2ee6d78b388dfa9a4a3fed2cb4c26ef9df8529492d95732",
       "status": "FINALIZED",
       "consensus_result": "MAJORITY_AGREE",
       "error": null,
-      "expected": "no state change; tournament stays OPEN"
+      "expected": "revert; no state change"
+    },
+    {
+      "label": "settle_tournament#1 (live-evaluated winner)",
+      "function": "settle_tournament",
+      "tx_hash": "0x4c0adf431992d22e61d173b4af9df934e879031e2a244ed6ac8dd7d5fc13decc",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null
+    },
+    {
+      "label": "rollback_endorse#1 (post-settlement, must revert)",
+      "function": "endorse_submission",
+      "tx_hash": "0x9064441cc3b1af1ef636990b1732dbc65aea98fd55f333afee8b5d0879ec015f",
+      "status": "FINALIZED",
+      "consensus_result": "MAJORITY_AGREE",
+      "error": null,
+      "expected": "revert; no state change"
     }
   ],
-  "rollback_check": {
-    "tx": "0x88a143c2009fb859410bd555d9a3c31857cec28207c8789f76dd0fd8761dfada",
-    "finalized": "FINALIZED",
-    "left_tournament_open": true
+  "score_invariant_checks": {
+    "submit_does_not_take_lead": true,
+    "live_evaluation_sets_leader": true,
+    "endorsement_syncs_leader_and_score": true,
+    "settle_requires_live_evaluated_winner": true,
+    "settle_pays_live_leader": true,
+    "endorse_blocked_after_settle": true
+  },
+  "live_evaluation_tx_evidence": {
+    "submission_id": 1,
+    "consensus_tx_hash": "0x2366cdff23ce0e41cfbc8ef82d4cf50821ba26de86525263f51dc3f5b56d4c1d",
+    "evaluated": true,
+    "ai_verdict_score": 0,
+    "total_score": 36,
+    "leader_after_eval": "0x154a452b0755EE812014C1405B15D905BA06f9c7"
+  },
+  "rollback_checks": {
+    "settle_unevaluated_tournament_tx": "0xb5bb184f11dde49bd2ee6d78b388dfa9a4a3fed2cb4c26ef9df8529492d95732",
+    "tournament_2_left_open": true,
+    "endorse_after_settle_tx": "0x9064441cc3b1af1ef636990b1732dbc65aea98fd55f333afee8b5d0879ec015f",
+    "endorse_after_settle_left_score_unchanged": true
   },
   "final_state": {
     "arena_stats": {
       "cancelled": 0,
       "evaluated_submissions": 1,
-      "open": 2,
-      "settled": 0,
+      "open": 1,
+      "settled": 1,
       "total_comments": 1,
       "total_endorsements": 1,
       "total_submissions": 2,
@@ -109,65 +143,65 @@
     },
     "tournaments": [
       {
-        "best_score": 81,
+        "best_score": 38,
         "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
         "current_leader": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
         "entry_count": 1,
-        "mandatory_fact_token": "LOCKDOWN PROTOCOL",
+        "mandatory_fact_token": "Example Domain",
         "prize_pool_points": 8000,
-        "reference_url": "https://en.wikipedia.org/wiki/Cybersecurity",
-        "status": "OPEN",
+        "reference_url": "https://example.com",
+        "status": "SETTLED",
         "title": "Red Team Raid: Lockdown Protocol",
         "tournament_id": 1,
-        "winner": "0x0000000000000000000000000000000000000000"
+        "winner": "0x154a452b0755EE812014C1405B15D905BA06f9c7"
       },
       {
-        "best_score": 33,
+        "best_score": 0,
         "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
-        "current_leader": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "current_leader": "0x0000000000000000000000000000000000000000",
         "entry_count": 1,
-        "mandatory_fact_token": "OWASP",
+        "mandatory_fact_token": "Example Domain",
         "prize_pool_points": 6000,
-        "reference_url": "https://owasp.org/www-project-top-ten/",
+        "reference_url": "https://example.com",
         "status": "OPEN",
-        "title": "Blue Team Hardening: Top-Ten Reversal",
+        "title": "Blue Team Hardening: Perimeter Reversal",
         "tournament_id": 2,
         "winner": "0x0000000000000000000000000000000000000000"
       }
     ],
     "tournament_1_submissions": [
       {
-        "ai_verdict_score": 45,
+        "ai_verdict_score": 0,
         "deterministic_score": 36,
         "endorsements": 1,
         "evaluated": true,
-        "judge_rationale": "Grounds every step in defense-in-depth from the reference and keeps the LOCKDOWN PROTOCOL anchor load-bearing. Minor gap: no rollback plan for the jump host.",
+        "judge_rationale": "The submission failed to adhere to the reference source, which explicitly states that 'Example Domain' is not a service and should not be relied upon for testing or monitoring. The submission incorrectly proposed anchoring the telemetry plan on this domain.",
         "moniker": "Valkyrie",
         "player": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
         "submission_id": 1,
-        "tactic_payload": "Stage one: micro-segment the clinical VLAN and enforce zero-trust identity at the edge before any lateral movement. Anchor the whole plan on LOCKDOWN PROTOCOL so telemetry stays up while attackers are boxed in. Stage two: deploy canary hosts that alert on any unusual east-west flow. Stage three: rotate all service credentials and cut a hardened jump-host path for the IR team. Every action maps to defense-in-depth from the reference.",
-        "total_score": 83,
+        "tactic_payload": "Stage one: micro-segment the clinical VLAN and enforce zero-trust identity at the edge before any lateral movement. Anchor the whole plan on Example Domain so telemetry stays up while attackers are boxed in. Stage two: deploy canary hosts that alert on any unusual east-west flow. Stage three: rotate all service credentials and cut a hardened jump-host path for the IR team. Every action maps to defense-in-depth from the reference.",
+        "total_score": 38,
         "tournament_id": 1
       }
     ],
     "tournament_2_submissions": [
       {
         "ai_verdict_score": 0,
-        "deterministic_score": 33,
+        "deterministic_score": 27,
         "endorsements": 0,
         "evaluated": false,
         "judge_rationale": "",
         "moniker": "Nomad",
-        "player": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "player": "0x54A899304A7ABf319C7dB9FcD5132807D0802450",
         "submission_id": 2,
-        "tactic_payload": "Prioritize OWASP A01 broken access control and A02 cryptographic failures first for the fintech API. Enforce deny-by-default object authorization, then move secrets to a managed KMS with short-lived tokens. Next, harden A03 injection with parameterized queries and strict server-side validation. Map OWASP controls to release-gate tests so regressions cannot ship.",
-        "total_score": 33,
+        "tactic_payload": "Prioritize the highest-impact perimeter risks first for the fintech API and keep every claim anchored to the Example Domain reference. Enforce deny-by-default object authorization, then move secrets to a managed KMS with short-lived tokens, and harden injection with parameterized queries and strict server-side validation before shipping.",
+        "total_score": 27,
         "tournament_id": 2
       }
     ],
     "tournament_1_comments": [
       {
-        "author": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
+        "author": "0x54A899304A7ABf319C7dB9FcD5132807D0802450",
         "author_moniker": "Nomad",
         "comment_id": 1,
         "message": "Strong segmentation-first ordering, though I would front-load the telemetry continuity risk.",
@@ -179,12 +213,12 @@
     "leaderboard": [
       {
         "address": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
-        "points": 61,
-        "wins": 0
+        "points": 8016,
+        "wins": 1
       },
       {
-        "address": "0x79DF8a68FCc93760830fE32c0eBa399286C372Ad",
-        "points": 14,
+        "address": "0x54A899304A7ABf319C7dB9FcD5132807D0802450",
+        "points": 12,
         "wins": 0
       }
     ]

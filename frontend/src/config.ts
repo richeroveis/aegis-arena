@@ -1,6 +1,6 @@
 // Live deployment coordinates for AegisArena on GenLayer studionet.
 
-export const CONTRACT_ADDRESS = "0xb3aC20AC3d86eaa88f789F602dE709EfD3aaC0Cd" as const;
+export const CONTRACT_ADDRESS = "0x09a0D07800547074a7D1f7c48B96208ee653d5DA" as const;
 
 export const STUDIONET_RPC = "https://studio.genlayer.com/api";
 export const CHAIN_ID = 61999;

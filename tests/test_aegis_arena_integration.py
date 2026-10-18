@@ -66,6 +66,7 @@ def arena():
     from genlayer_py.types import TransactionStatus
 
     acct = create_account(account_private_key=_load_pk())
+    peer = create_account()
     client = create_client(chain=studionet, account=acct)
     tx = _retry(client.deploy_contract, code=CONTRACT_SRC, args=[], leader_only=True)
     rcpt = _retry(client.wait_for_transaction_receipt, tx, status=TransactionStatus.FINALIZED, interval=6000, retries=40)
@@ -80,13 +81,13 @@ def arena():
     def read(fn, args=None):
         return _retry(client.read_contract, address, fn, args=args or [])
 
-    yield client, acct, address, write, read
+    yield client, acct, peer, address, write, read
 
 
 def test_integration_full_lifecycle(arena):
     from genlayer_py.types import TransactionStatus  # noqa: F401
 
-    client, acct, address, write, read = arena
+    client, acct, peer, address, write, read = arena
     assert address.startswith("0x")
 
     # 1. create tournament pointing at a real, stable public source
@@ -99,30 +100,51 @@ def test_integration_full_lifecycle(arena):
     ])
     assert rc.get("result_name") == "MAJORITY_AGREE"
 
-    # 2. submit a token-bearing tactic
+    # 2. submit a token-bearing tactic (unevaluated: it must not take the lead)
     _, rc = write("submit_tactic", [1, "Auditor", PAYLOAD])
     subs = read("get_tournament_submissions", [1])
     assert len(subs) == 1
     det = subs[0]["deterministic_score"]
     assert 0 <= det <= 40
+    t = read("get_tournament", [1])
+    assert t["best_score"] == 0
+    assert int(t["current_leader"], 16) == 0
 
-    # 3. live consensus evaluation (non-deterministic: web render + LLM judged by validators)
-    _, rc = write("evaluate_tactic_live", [1], leader_only=False)
-    assert rc.get("status_name") == "FINALIZED", rc
-    assert rc.get("result_name") == "MAJORITY_AGREE", rc
+    # 3. settlement must be blocked until a winning submission completes live
+    #    consensus; the revert leaves the tournament OPEN with no leader
+    write("settle_tournament", [1])
+    t = read("get_tournament", [1])
+    assert t["status"] == "OPEN", "unevaluated tournament must not settle"
+    assert int(t["winner"], 16) == 0
+
+    # 4. live consensus evaluation (non-deterministic: web render + LLM judged by validators).
+    #    Requiring validators to agree on the exact quantized verdict can rarely end in
+    #    MAJORITY_DISAGREE, which is a clean rollback (no state change), so re-invoke until
+    #    the network converges on consensus.
+    for attempt in range(5):
+        _, rc = write("evaluate_tactic_live", [1], leader_only=False)
+        assert rc.get("status_name") == "FINALIZED", rc
+        if rc.get("result_name") == "MAJORITY_AGREE":
+            break
+    else:
+        pytest.fail("evaluate_tactic_live did not reach validator consensus after retries")
     subs = read("get_tournament_submissions", [1])
     assert subs[0]["evaluated"] is True
     assert 0 <= subs[0]["ai_verdict_score"] <= 60
+    assert subs[0]["ai_verdict_score"] % 5 == 0, "verdict must land on the 5-point grid"
     assert 0 <= subs[0]["total_score"] <= 100
     assert subs[0]["judge_rationale"] != ""
+    t = read("get_tournament", [1])
+    assert t["best_score"] == subs[0]["total_score"]
+    assert t["current_leader"] == acct.address
 
-    # 4. attack path: self-endorsement must not apply any state change
+    # 5. attack path: self-endorsement must not apply any state change
     before = read("get_tournament_submissions", [1])[0]["endorsements"]
     write("endorse_submission", [1])  # acct is the submitter -> should revert on-chain
     after = read("get_tournament_submissions", [1])[0]["endorsements"]
     assert after == before, "self-endorsement must not change endorsements"
 
-    # 5. happy path settle locks the winner
+    # 6. happy path settle locks the live-evaluated winner
     _, rc = write("settle_tournament", [1])
     t = read("get_tournament", [1])
     assert t["status"] == "SETTLED"
@@ -130,9 +152,16 @@ def test_integration_full_lifecycle(arena):
     board = read("get_leaderboard")
     assert any(row["address"] == acct.address and row["wins"] >= 1 for row in board)
 
+    # 7. score-changing endorsements are frozen after settlement
+    pre = read("get_tournament_submissions", [1])[0]
+    write("endorse_submission", [1], account=peer)  # peer is not the player, but status is SETTLED
+    post = read("get_tournament_submissions", [1])[0]
+    assert post["endorsements"] == pre["endorsements"], "post-settlement endorsement must not apply"
+    assert post["total_score"] == pre["total_score"], "post-settlement endorsement must not change score"
+
 
 def test_integration_stats_consistent(arena):
-    _, _, _, _, read = arena
+    _, _, _, _, _, read = arena
     stats = read("get_arena_stats")
     assert stats["total_tournaments"] >= 1
     assert stats["settled"] >= 1

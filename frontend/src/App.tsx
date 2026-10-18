@@ -219,10 +219,16 @@ export default function App() {
             <h2 className="section-title">How resolution works</h2>
             <p className="small muted" style={{ lineHeight: 1.6 }}>
               Every tactic is scored deterministically on-chain (structure, length efficiency and the
-              mandatory fact token) for up to 40 points. The optional live path fetches the tournament
-              reference URL through validators and runs an LLM comparative judgment for up to 60 more,
-              so the outcome is independently verified rather than self-reported. Community endorsements
-              add capped bonus points, and the creator settles the pot to the on-chain leader.
+              mandatory fact token) for up to 40 points, but a submission can never lead or win until
+              it completes the live GenLayer consensus evaluation. That evaluation fetches the
+              tournament reference URL through validators and runs an LLM comparative judgment, with
+              the verdict snapped onto a fixed 5-point grid (0, 5, 10, ..., 60) so validators agree on
+              one exact score for up to 60 more. There is no creator or owner shortcut; only this
+              neutral path marks a submission evaluated. Community endorsements add a capped bonus,
+              and the ranking score and the settlement winner always follow the single invariant
+              min(100, deterministic + AI verdict + endorsements x 2). The creator settles the pot to
+              the live-evaluated on-chain leader, and endorsements are frozen once a tournament
+              settles or cancels.
             </p>
           </div>
         </div>

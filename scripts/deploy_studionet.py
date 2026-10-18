@@ -99,11 +99,17 @@ def finalize(client, tx_hash: str) -> dict:
     )
 
 
-def submit_write(client, address, fn, args, account, label, log):
-    """Send one write tx, wait FINALIZED, capture evidence. Returns receipt."""
+def submit_write(client, address, fn, args, account, label, log, leader_only=True, expect_revert=False):
+    """Send one write tx, wait FINALIZED, capture evidence. Returns receipt.
+
+    leader_only=False is required for the non-deterministic evaluate_tactic_live
+    path so it runs through full validator consensus. expect_revert marks calls
+    that must apply no state change (used for the negative checks); their receipt
+    error is recorded but is not treated as a failure.
+    """
     tx_hash = retry_call(
         client.write_contract,
-        address, fn, account=account, args=args, leader_only=True,
+        address, fn, account=account, args=args, leader_only=leader_only,
     )
     receipt = finalize(client, tx_hash)
     entry = {
@@ -114,6 +120,8 @@ def submit_write(client, address, fn, args, account, label, log):
         "consensus_result": receipt.get("result_name"),
         "error": receipt.get("error"),
     }
+    if expect_revert:
+        entry["expected"] = "revert; no state change"
     log.append(entry)
     print(f"  {label}: {entry['status']} / {entry['consensus_result']} {tx_hash}")
     time.sleep(3)
@@ -169,24 +177,36 @@ def main() -> int:
 
     # ---- seeding ----
     print("Seeding reviewer state...")
-    t1_url = "https://en.wikipedia.org/wiki/Cybersecurity"
-    t2_url = "https://owasp.org/www-project-top-ten/"
+    # A fast, reliable public reference page with a mandatory token every
+    # validator can independently verify through the live consensus path.
+    ref_url = "https://example.com"
+    ref_token = "Example Domain"
+
+    def read_tournament(i):
+        return retry_call(client.read_contract, address, "get_tournament", args=[i])
+
+    def read_submission(tid, sid):
+        subs = retry_call(client.read_contract, address, "get_tournament_submissions", args=[tid])
+        for s in subs:
+            if int(s["submission_id"]) == sid:
+                return s
+        return {}
 
     _, _ = submit_write(client, address, "create_tournament", [
         "Red Team Raid: Lockdown Protocol",
         "Design a covert network-segmentation plan that isolates the crown-jewel VLAN "
         "without disrupting hospital telemetry. Ground every claim in the reference source.",
-        t1_url,
-        "LOCKDOWN PROTOCOL",
+        ref_url,
+        ref_token,
         8000,
     ], main_account, "create_tournament#1", log)
 
     _, _ = submit_write(client, address, "create_tournament", [
-        "Blue Team Hardening: Top-Ten Reversal",
+        "Blue Team Hardening: Perimeter Reversal",
         "Produce a prioritized remediation brief that neutralizes the three highest-impact "
-        "OWASP entries for a public fintech API. Cite the reference list.",
-        t2_url,
-        "OWASP",
+        "perimeter risks for a public fintech API. Cite the reference source.",
+        ref_url,
+        ref_token,
         6000,
     ], main_account, "create_tournament#2", log)
 
@@ -194,30 +214,64 @@ def main() -> int:
         1,
         "Valkyrie",
         "Stage one: micro-segment the clinical VLAN and enforce zero-trust identity at the "
-        "edge before any lateral movement. Anchor the whole plan on LOCKDOWN PROTOCOL so telemetry "
+        "edge before any lateral movement. Anchor the whole plan on Example Domain so telemetry "
         "stays up while attackers are boxed in. Stage two: deploy canary hosts that alert on any "
         "unusual east-west flow. Stage three: rotate all service credentials and cut a hardened "
         "jump-host path for the IR team. Every action maps to defense-in-depth from the reference.",
-    ], main_account, "submit_tactic#1 (Valkyrie)", log)
+    ], main_account, "submit_tactic#1 (Valkyrie, live tournament)", log)
 
     submit_write(client, address, "submit_tactic", [
         2,
         "Nomad",
-        "Prioritize OWASP A01 broken access control and A02 cryptographic failures first for the "
-        "fintech API. Enforce deny-by-default object authorization, then move secrets to a managed KMS "
-        "with short-lived tokens. Next, harden A03 injection with parameterized queries and strict "
-        "server-side validation. Map OWASP controls to release-gate tests so regressions cannot ship.",
-    ], peer_account, "submit_tactic#2 (Nomad, peer signer)", log)
+        "Prioritize the highest-impact perimeter risks first for the fintech API and keep every "
+        "claim anchored to the Example Domain reference. Enforce deny-by-default object "
+        "authorization, then move secrets to a managed KMS with short-lived tokens, and harden "
+        "injection with parameterized queries and strict server-side validation before shipping.",
+    ], peer_account, "submit_tactic#2 (Nomad, peer signer, unevaluated tournament)", log)
 
-    submit_write(client, address, "score_tactic_deterministic", [
-        1,
-        45,
-        "Grounds every step in defense-in-depth from the reference and keeps the LOCKDOWN PROTOCOL "
-        "anchor load-bearing. Minor gap: no rollback plan for the jump host.",
-    ], main_account, "score_tactic_deterministic#1 (creator rubric)", log)
+    # A freshly submitted tactic must NOT take the lead before live consensus.
+    t1_before = read_tournament(1)
+    leader_before_eval = t1_before.get("current_leader")
+    best_before_eval = int(t1_before.get("best_score", 0))
 
+    # ---- real live-consensus evaluation on studionet (full validator path) ----
+    # Requiring validators to agree on the exact quantized verdict can, on rare
+    # runs, end in MAJORITY_DISAGREE. That is a clean rollback (no state change,
+    # the submission stays unevaluated), so re-invoking is safe. Retry until the
+    # network reaches consensus, bounded to avoid an infinite loop.
+    print("Running live consensus evaluation on submission #1...")
+    eval_tx = None
+    for attempt in range(5):
+        _eval_receipt, eval_tx = submit_write(client, address, "evaluate_tactic_live", [1], main_account,
+                     f"evaluate_tactic_live#1 (full validator consensus, attempt {attempt + 1})", log,
+                     leader_only=False)
+        if _eval_receipt.get("result_name") == "MAJORITY_AGREE":
+            break
+    else:
+        print("  WARNING: live consensus did not converge on an exact verdict after retries")
+
+    sub1_eval = read_submission(1, 1)
+    t1_after_eval = read_tournament(1)
+    leader_after_eval = t1_after_eval.get("current_leader")
+    best_after_eval = int(t1_after_eval.get("best_score", 0))
+    eval_verified = (
+        sub1_eval.get("evaluated") is True
+        and int(sub1_eval.get("ai_verdict_score", -1)) % 5 == 0
+        and best_after_eval == int(sub1_eval.get("total_score", -1))
+        and leader_after_eval == sub1_eval.get("player")
+    )
+
+    # ---- community endorsement from a second signer (leader/score sync) ----
     submit_write(client, address, "endorse_submission", [1], peer_account,
                  "endorse_submission#1 (peer signer)", log)
+    sub1_end = read_submission(1, 1)
+    t1_after_endorse = read_tournament(1)
+    best_after_endorse = int(t1_after_endorse.get("best_score", 0))
+    endorse_sync_verified = (
+        best_after_endorse == best_after_eval + 2
+        and best_after_endorse == int(sub1_end.get("total_score", -1))
+        and t1_after_endorse.get("current_leader") == leader_after_eval
+    )
 
     submit_write(client, address, "post_arena_comment", [
         1, 1, "Nomad",
@@ -225,28 +279,42 @@ def main() -> int:
         "ANALYSIS",
     ], peer_account, "post_arena_comment#1 (peer signer)", log)
 
-    # ---- expected rollback: cancel a tournament that already has entries ----
-    rb_tx = retry_call(
-        client.write_contract, address, "cancel_tournament",
-        account=main_account, args=[1], leader_only=True,
-    )
-    rb_receipt = finalize(client, rb_tx)
-    rb_finalized = (rb_receipt.get("status_name") or rb_receipt.get("status"))
-    log.append({
-        "label": "rollback_check cancel_tournament#1 (has entries, must not take effect)",
-        "function": "cancel_tournament",
-        "tx_hash": rb_tx,
-        "status": rb_finalized,
-        "consensus_result": rb_receipt.get("result_name"),
-        "error": rb_receipt.get("error"),
-        "expected": "no state change; tournament stays OPEN",
-    })
-    print(f"  rollback check tx {rb_tx}: {rb_finalized}")
-
-    # ---- read back and verify the rollback left state intact ----
+    # ---- expected rollback A: settle tournament #2 with no live evaluation ----
+    # Tournament #2 has an entry that never completed evaluate_tactic_live, so
+    # settlement must revert and leave the tournament OPEN.
+    _, rb_settle_tx = submit_write(client, address, "settle_tournament", [2], main_account,
+                                    "rollback_settle#2 (no live-evaluated winner, must revert)", log,
+                                    expect_revert=True)
     time.sleep(2)
-    t1_state = retry_call(client.read_contract, address, "get_tournament", args=[1])
-    rollback_ok = t1_state.get("status") == "OPEN"
+    t2_state = read_tournament(2)
+    rollback_settle_ok = (
+        t2_state.get("status") == "OPEN"
+        and int(t2_state.get("best_score", 0)) == 0
+    )
+
+    # ---- settle tournament #1 pays the live-evaluated on-chain leader ----
+    submit_write(client, address, "settle_tournament", [1], main_account,
+                 "settle_tournament#1 (live-evaluated winner)", log)
+    t1_settled = read_tournament(1)
+    settle_winner_verified = (
+        t1_settled.get("status") == "SETTLED"
+        and t1_settled.get("winner") == leader_after_eval
+        and t1_settled.get("winner") == sub1_eval.get("player")
+    )
+
+    # ---- expected rollback B: endorse a submission after its tournament settled ----
+    sub1_pre_rb = read_submission(1, 1)
+    _, rb_endorse_tx = submit_write(client, address, "endorse_submission", [1], peer_account,
+                                     "rollback_endorse#1 (post-settlement, must revert)", log,
+                                     expect_revert=True)
+    time.sleep(2)
+    sub1_post_rb = read_submission(1, 1)
+    rollback_endorse_ok = (
+        int(sub1_post_rb.get("endorsements", -1)) == int(sub1_pre_rb.get("endorsements", 0))
+        and int(sub1_post_rb.get("total_score", -1)) == int(sub1_pre_rb.get("total_score", -1))
+    )
+
+    # ---- read back final state ----
     all_tournaments = retry_call(client.read_contract, address, "get_all_tournaments", args=[])
     subs_1 = retry_call(client.read_contract, address, "get_tournament_submissions", args=[1])
     subs_2 = retry_call(client.read_contract, address, "get_tournament_submissions", args=[2])
@@ -256,9 +324,21 @@ def main() -> int:
 
     print("\nFinal on-chain state:")
     print("  stats:", stats)
-    print("  tournament#1 status:", t1_state.get("status"), "leader:", t1_state.get("current_leader"))
-    print("  tournament#1 endorsements:", subs_1[0]["endorsements"] if subs_1 else None)
-    print("  rollback left OPEN:", rollback_ok)
+    print("  T1 leader before eval:", leader_before_eval, "best:", best_before_eval)
+    print("  T1 leader after eval:", leader_after_eval, "best:", best_after_eval)
+    print("  T1 best after endorse:", best_after_endorse, "(endorse sync:", endorse_sync_verified, ")")
+    print("  T1 settled winner matches live leader:", settle_winner_verified)
+    print("  T2 settle blocked without live evaluation:", rollback_settle_ok)
+    print("  T1 endorse-after-settle blocked:", rollback_endorse_ok)
+
+    invariant = {
+        "submit_does_not_take_lead": best_before_eval == 0,
+        "live_evaluation_sets_leader": eval_verified,
+        "endorsement_syncs_leader_and_score": endorse_sync_verified,
+        "settle_requires_live_evaluated_winner": rollback_settle_ok,
+        "settle_pays_live_leader": settle_winner_verified,
+        "endorse_blocked_after_settle": rollback_endorse_ok,
+    }
 
     evidence = {
         "network": "studionet",
@@ -279,10 +359,20 @@ def main() -> int:
             "explorer_deployment_tx": deployment_tx,
         },
         "transactions": log,
-        "rollback_check": {
-            "tx": rb_tx,
-            "finalized": rb_finalized,
-            "left_tournament_open": rollback_ok,
+        "score_invariant_checks": invariant,
+        "live_evaluation_tx_evidence": {
+            "submission_id": 1,
+            "consensus_tx_hash": eval_tx,
+            "evaluated": sub1_eval.get("evaluated"),
+            "ai_verdict_score": sub1_eval.get("ai_verdict_score"),
+            "total_score": sub1_eval.get("total_score"),
+            "leader_after_eval": leader_after_eval,
+        },
+        "rollback_checks": {
+            "settle_unevaluated_tournament_tx": rb_settle_tx,
+            "tournament_2_left_open": rollback_settle_ok,
+            "endorse_after_settle_tx": rb_endorse_tx,
+            "endorse_after_settle_left_score_unchanged": rollback_endorse_ok,
         },
         "final_state": {
             "arena_stats": stats,
@@ -302,13 +392,16 @@ def main() -> int:
 
     ok = (
         deploy_receipt.get("status_name") == "FINALIZED"
-        and rollback_ok
+        and three_way_match
+        and all(invariant.values())
         and stats.get("total_tournaments", 0) == 2
         and stats.get("total_submissions", 0) == 2
+        and stats.get("evaluated_submissions", 0) >= 1
         and stats.get("total_endorsements", 0) >= 1
         and stats.get("total_comments", 0) >= 1
+        and stats.get("settled", 0) >= 1
     )
-    print("DEPLOY+SEED OK:", ok)
+    print("DEPLOY+SEED OK:", ok, "| invariant:", invariant)
     return 0 if ok else 1
 
 

@@ -102,6 +102,14 @@ button.sm { padding: 6px 10px; font-size: 13px; border-radius: 8px; }
 .badge.COMMEND { color: var(--green); }
 .badge.CHALLENGE { color: var(--red); }
 .badge.ANALYSIS { color: var(--cyan); }
+.badge.eval-ok {
+  color: var(--green); border-color: rgba(56, 245, 163, 0.4);
+  text-transform: none; letter-spacing: 0;
+}
+.badge.eval-pending {
+  color: var(--amber); border-color: rgba(255, 180, 58, 0.4);
+  text-transform: none; letter-spacing: 0;
+}
 
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.6s infinite; }

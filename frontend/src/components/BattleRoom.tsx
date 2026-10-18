@@ -136,8 +136,13 @@ export function BattleRoom(props: Props) {
               <span>ai {Number(s.ai_verdict_score)}/60</span>
               <span>·</span>
               <span>{Number(s.endorsements)} endorsements</span>
-              <span>·</span>
-              <span>{s.evaluated ? "evaluated" : "pending"}</span>
+            </div>
+            <div style={{ margin: "6px 0" }}>
+              {s.evaluated ? (
+                <span className="badge eval-ok">Live Consensus Evaluated (Eligible to Win)</span>
+              ) : (
+                <span className="badge eval-pending">Awaiting Live AI Evaluation</span>
+              )}
             </div>
             <div className="payload">{s.tactic_payload}</div>
             {s.judge_rationale && (
@@ -156,8 +161,13 @@ export function BattleRoom(props: Props) {
               </button>
               <button
                 className="sm"
-                disabled={!connected || mine || busy}
+                disabled={!connected || mine || busy || !isOpen}
                 onClick={() => props.onEndorse(s.submission_id)}
+                title={
+                  isOpen
+                    ? "Endorse this submission"
+                    : "Endorsements close once the tournament is settled or cancelled"
+                }
               >
                 + Endorse
               </button>

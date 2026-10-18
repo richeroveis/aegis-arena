@@ -17,9 +17,13 @@ VALID_STATUSES = (STATUS_OPEN, STATUS_SETTLED, STATUS_CANCELLED)
 VALID_STANCES = ("COMMEND", "CHALLENGE", "ANALYSIS")
 
 # Deterministic score is 0..40, AI verdict is 0..60, total is 0..100.
+# The AI verdict is only ever a value on a fixed 5-point grid so validators
+# can agree on one exact integer (0, 5, 10, ..., 60).
 DET_MAX = 40
 AI_MAX = 60
+AI_GRID = 5
 TOTAL_MAX = 100
+ENDORSE_BONUS = 2
 
 WEB_TRUNCATE = 5000
 RATIONALE_MAX = 400
@@ -200,6 +204,14 @@ def _parse_llm_score(raw: dict) -> tuple:
     return (u256(score), rationale)
 
 
+def _quantize_ai_score(value: int) -> int:
+    # Snap any parsed verdict onto the fixed 5-point grid (0, 5, ..., 60) so
+    # every validator converges on one exact integer score. Rounding is fully
+    # deterministic and applied identically by the leader and each validator.
+    snapped = ((int(value) + AI_GRID // 2) // AI_GRID) * AI_GRID
+    return _clamp(snapped, 0, AI_MAX)
+
+
 class AegisArena(gl.Contract):
     # ---- storage fields ----
     owner: Address
@@ -259,10 +271,32 @@ class AegisArena(gl.Contract):
         key = self._register_player(addr)
         self.player_points[key] = self.player_points[key] + amount
 
-    def _update_leader(self, t: Tournament, candidate_total: u256, candidate_player: Address) -> None:
-        if candidate_total > t.best_score:
-            t.best_score = candidate_total
-            t.current_leader = candidate_player
+    def _sync_leader_if_evaluated(self, tournament_id: u256) -> None:
+        # One deterministic leader invariant shared by the ranking and the
+        # settlement winner: current_leader and best_score always reflect the
+        # highest-total-score submission that has completed live consensus
+        # evaluation. Unevaluated submissions can never lead or win. Ties are
+        # broken deterministically by the earliest submission_id.
+        tkey = str(tournament_id)
+        if tkey not in self.tournaments:
+            return
+        tournament = self.tournaments[tkey]
+        best_total = u256(0)
+        best_player = Address(bytes(20))
+        found = False
+        sid = 1
+        total = int(self.submission_counter)
+        while sid <= total:
+            submission = self.submissions[str(sid)]
+            if submission.tournament_id == tournament_id and submission.evaluated:
+                if not found or submission.total_score > best_total:
+                    best_total = submission.total_score
+                    best_player = submission.player
+                    found = True
+            sid += 1
+        tournament.best_score = best_total
+        tournament.current_leader = best_player
+        self.tournaments[tkey] = tournament
 
     # ---- write methods ----
     @gl.public.write
@@ -352,7 +386,9 @@ class AegisArena(gl.Contract):
         )
         self.submissions[str(sid)] = submission
         tournament.entry_count = tournament.entry_count + 1
-        self._update_leader(tournament, u256(det), sender)
+        # A brand new submission is not yet live-evaluated, so it must not take
+        # the lead. current_leader and best_score are only ever moved forward by
+        # _sync_leader_if_evaluated once evaluate_tactic_live completes.
         self.tournaments[tkey] = tournament
 
         participation_xp = u256(5 + det // 4)
@@ -390,10 +426,12 @@ class AegisArena(gl.Contract):
 
             task = (
                 "You are a strict tactical judge for an on-chain arena battle. "
-                "Score the submission from 0 to 60 based ONLY on factual alignment "
-                "with the reference source and tactical quality. "
+                "Score the submission based ONLY on factual alignment with the "
+                "reference source and tactical quality. The score MUST be one of "
+                "these exact 5-point grid values: 0, 5, 10, 15, 20, 25, 30, 35, "
+                "40, 45, 50, 55, 60. "
                 f"The submission must correctly weave in the mandatory fact token: '{safe_token}'. "
-                "Return JSON: {\"ai_verdict_score\": <integer 0..60>, \"rationale\": \"<short explanation>\"}.\n\n"
+                "Return JSON: {\"ai_verdict_score\": <one grid value above>, \"rationale\": \"<short explanation>\"}.\n\n"
                 f"<challenge_brief>{safe_brief}</challenge_brief>\n\n"
                 f"<untrusted_reference>\n{page}\n</untrusted_reference>\n\n"
                 f"<untrusted_submission>\n{safe_payload}\n</untrusted_submission>"
@@ -404,66 +442,47 @@ class AegisArena(gl.Contract):
                 response_format="json",
             )
             score, rationale = _parse_llm_score(verdict)
-            return {"ai_verdict_score": score, "rationale": rationale}
+            quantized = u256(_quantize_ai_score(int(score)))
+            return {"ai_verdict_score": quantized, "rationale": rationale}
 
         result = gl.eq_principle.prompt_comparative(
             judge_fn,
             principle=(
-                "ai_verdict_score must be within 10 points of each other and both "
-                "judged the same submission against the same reference; rationale may differ."
+                "ai_verdict_score is a single integer on the fixed 5-point grid "
+                "(0, 5, 10, ..., 60). Validators must agree on the exact same "
+                "integer ai_verdict_score value; only the rationale may differ."
             ),
         )
 
-        ai_score = u256(_clamp(int(result["ai_verdict_score"]), 0, AI_MAX))
+        ai_score = u256(_quantize_ai_score(int(result["ai_verdict_score"])))
         rationale = str(result["rationale"])
         if len(rationale) > RATIONALE_MAX:
             rationale = rationale[:RATIONALE_MAX]
 
-        total = u256(_clamp(int(deterministic_score) + int(ai_score), 0, TOTAL_MAX))
+        # The stored score obeys one invariant everywhere: min(100, deterministic
+        # + ai_verdict + endorsements * 2). Any endorsements already recorded on
+        # this submission are folded in so evaluation and endorsement never
+        # disagree on the ranking score that also picks the settlement winner.
+        total = u256(
+            _clamp(
+                int(deterministic_score)
+                + int(ai_score)
+                + int(submission.endorsements) * ENDORSE_BONUS,
+                0,
+                TOTAL_MAX,
+            )
+        )
         submission.ai_verdict_score = ai_score
         submission.total_score = total
         submission.evaluated = True
         submission.judge_rationale = rationale
         self.submissions[skey] = submission
 
-        self._update_leader(tournament, total, submission.player)
-        self.tournaments[tkey] = tournament
+        # Recompute the shared leader invariant now that this submission is
+        # live-evaluated, so ranking and settlement winner move in lockstep.
         self.evaluated_count = self.evaluated_count + 1
         self._add_points(submission.player, ai_score)
-        return total
-
-    @gl.public.write
-    def score_tactic_deterministic(self, submission_id: u256, rubric_bonus: u256, rationale: str) -> u256:
-        skey = str(submission_id)
-        _require(skey in self.submissions, "submission does not exist")
-        submission = self.submissions[skey]
-        _require(not submission.evaluated, "submission already evaluated")
-
-        tkey = str(submission.tournament_id)
-        _require(tkey in self.tournaments, "tournament does not exist")
-        tournament = self.tournaments[tkey]
-        _require(tournament.status == STATUS_OPEN, "tournament is not OPEN")
-        sender = gl.message.sender_address
-        _require(
-            sender == tournament.creator or sender == self.owner,
-            "only tournament creator or owner may score deterministically",
-        )
-        _require(int(rubric_bonus) <= AI_MAX, "rubric_bonus must be 0..60")
-        _require(1 <= len(rationale) <= RATIONALE_MAX, "rationale must be 1..400 chars")
-        _require(_is_clean_str(rationale), "rationale contains control characters")
-
-        bonus = u256(rubric_bonus)
-        total = u256(_clamp(int(submission.deterministic_score) + int(bonus), 0, TOTAL_MAX))
-        submission.ai_verdict_score = bonus
-        submission.total_score = total
-        submission.evaluated = True
-        submission.judge_rationale = rationale
-        self.submissions[skey] = submission
-
-        self._update_leader(tournament, total, submission.player)
-        self.tournaments[tkey] = tournament
-        self.evaluated_count = self.evaluated_count + 1
-        self._add_points(submission.player, bonus)
+        self._sync_leader_if_evaluated(submission.tournament_id)
         return total
 
     @gl.public.write
@@ -471,6 +490,17 @@ class AegisArena(gl.Contract):
         skey = str(submission_id)
         _require(skey in self.submissions, "submission does not exist")
         submission = self.submissions[skey]
+
+        tkey = str(submission.tournament_id)
+        _require(tkey in self.tournaments, "tournament does not exist")
+        tournament = self.tournaments[tkey]
+        # Score-changing endorsements are frozen once a tournament leaves OPEN,
+        # so no endorsement can move the settled or cancelled outcome.
+        _require(
+            tournament.status == STATUS_OPEN,
+            "cannot endorse submission after tournament is settled or cancelled",
+        )
+
         sender = gl.message.sender_address
         _require(sender != submission.player, "cannot endorse your own submission")
 
@@ -479,15 +509,26 @@ class AegisArena(gl.Contract):
         self.has_endorsed[endorse_key] = True
 
         submission.endorsements = submission.endorsements + 1
-        if submission.total_score < TOTAL_MAX:
-            headroom = TOTAL_MAX - int(submission.total_score)
-            bonus = 2 if headroom >= 2 else headroom
-            submission.total_score = u256(int(submission.total_score) + bonus)
+        # Recompute the ranking score from first principles so it always equals
+        # min(100, deterministic + ai_verdict + endorsements * 2), the exact same
+        # invariant used to pick the settlement winner.
+        submission.total_score = u256(
+            _clamp(
+                int(submission.deterministic_score)
+                + int(submission.ai_verdict_score)
+                + int(submission.endorsements) * ENDORSE_BONUS,
+                0,
+                TOTAL_MAX,
+            )
+        )
         self.submissions[skey] = submission
 
         self.total_endorsements = self.total_endorsements + 1
         self._add_points(submission.player, 2)
         self._add_points(sender, 1)
+        # If this endorsement pushed an evaluated submission ahead, the stored
+        # leader and best_score follow immediately in lockstep.
+        self._sync_leader_if_evaluated(submission.tournament_id)
         return submission.endorsements
 
     @gl.public.write
@@ -541,6 +582,17 @@ class AegisArena(gl.Contract):
         )
         _require(tournament.status == STATUS_OPEN, "tournament is not OPEN")
         _require(tournament.entry_count > 0, "cannot settle a tournament with no entries")
+
+        # Re-run the leader invariant immediately before settling and require an
+        # actually live-evaluated winning submission. A tournament whose entries
+        # never completed evaluate_tactic_live can never settle, and the winner
+        # is exactly the on-chain leader implied by the shared score invariant.
+        self._sync_leader_if_evaluated(tournament_id)
+        tournament = self.tournaments[tkey]
+        _require(
+            tournament.current_leader != Address(bytes(20)),
+            "cannot settle tournament without a live-evaluated winning submission",
+        )
 
         tournament.status = STATUS_SETTLED
         winner = tournament.current_leader
