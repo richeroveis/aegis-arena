@@ -7,18 +7,18 @@ Deployed on GenLayer studionet (chain id 61999).
 - Contract address: `0x35c9359795829DA2Aafc821aAc7d3d65E6d66f53`
 - Explorer: https://explorer-studio.genlayer.com/address/0x35c9359795829DA2Aafc821aAc7d3d65E6d66f53
 - Deploy tx: `0xcd11529b1eee7aced71fa7fc69287908ea647824e5f5ad5dd9b82cb8bafb0a38`
-- Deployed commit: completed by `scripts/verify_evidence.py` after the push.
+- Deployed commit: `99f6cfbaa78457d8de0159eb5e5eec0e55af571f`
 
 ## Four-way sha256 identity
 
 | Source | sha256 |
 |---|---|
 | Local LF file | `095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1` |
-| Git blob at commit | completed post-push |
-| Remote GitHub raw blob | completed post-push |
+| Git blob at commit | `095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1` |
+| Remote GitHub raw blob | `095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1` |
 | Studionet on-chain code | `095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1` |
 
-`scripts/verify_evidence.py <commit>` rewrites this section with all four hashes and the final match flag.
+Four-way match: **True**
 
 ## Live consensus outcomes
 
@@ -37,8 +37,6 @@ Exploit challenge #1 resolved as `RESOLVED_UPHELD` with band `PARTIAL_LEAK_WARN`
 | unevaluated_leader_settlement | True |
 | settlement_with_open_challenge | True |
 | post_settlement_endorsement | True |
-
-Stalled tournament recovery: T2 was cancelled permissionlessly after the window, refunding the pot and the locked defender bond.
 
 ## Vault invariant
 

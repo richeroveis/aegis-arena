@@ -205,7 +205,8 @@ deterministic evaluation backdoor.
   `contracts/aegis_arena.py`.
 - Contract file four-way sha256 (local LF, git blob, remote GitHub blob, on-chain code):
   `095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1`
-- Deployed commit: `COMMIT_PENDING`
+- Deployed commit: `99f6cfbaa78457d8de0159eb5e5eec0e55af571f`
+- Four-way sha256 match: `true`
 - Deploy tx: `0xcd11529b1eee7aced71fa7fc69287908ea647824e5f5ad5dd9b82cb8bafb0a38`
 - Full transaction table and guard reverts: `docs/evidence.md`.
 

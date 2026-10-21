@@ -18,10 +18,11 @@
     "deploy_payload": "095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1",
     "onchain_explorer_code": "095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1",
     "local_deploy_onchain_match": true,
-    "git_blob": null,
-    "remote_github_blob": null,
-    "four_way_match": false,
-    "explorer_deployment_tx": "0xcd11529b1eee7aced71fa7fc69287908ea647824e5f5ad5dd9b82cb8bafb0a38"
+    "git_blob": "095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1",
+    "remote_github_blob": "095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1",
+    "four_way_match": true,
+    "explorer_deployment_tx": "0xcd11529b1eee7aced71fa7fc69287908ea647824e5f5ad5dd9b82cb8bafb0a38",
+    "deployed_commit": "99f6cfbaa78457d8de0159eb5e5eec0e55af571f"
   },
   "transactions": [
     {
@@ -493,5 +494,6 @@
         "wins": 0
       }
     ]
-  }
+  },
+  "deployed_commit": "99f6cfbaa78457d8de0159eb5e5eec0e55af571f"
 }
