@@ -1,10 +1,12 @@
-"""Deploy AegisArena to GenLayer studionet, seed reviewer-ready state, and
-collect on-chain evidence.
+"""Deploy AegisArena Milestone v1 to GenLayer studionet, drive a live scenario,
+and collect reviewer-ready evidence.
 
 Run from the repo root:  python scripts/deploy_studionet.py
 
 Reads GENLAYER_PRIVATE_KEY from .env (never printed). Gasless on studionet.
-Writes a machine-readable evidence file to evidence/studionet_deployment.json.
+Writes evidence/studionet_deployment.json. The four-way sha256 check (local,
+git blob, remote GitHub blob, on-chain code) is completed by
+scripts/verify_evidence.py after the contract is committed and pushed.
 """
 
 from __future__ import annotations
@@ -45,7 +47,11 @@ from genlayer_py.types import TransactionStatus  # noqa: E402
 EXPLORER_ADDR_API = "https://explorer-studio.genlayer.com/api/address/"
 CONTRACT_PATH = ROOT / "contracts" / "aegis_arena.py"
 INTERVAL_MS = 6000
-RETRIES = 40
+RETRIES = 60
+CHALLENGE_WINDOW_SECONDS = 300
+PRIZE_T1 = 4000
+PRIZE_T2 = 2500
+BOND = 200
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -88,7 +94,6 @@ def retry_call(fn, *args, retries: int = 8, delay: int = 8, **kwargs):
 
 
 def finalize(client, tx_hash: str) -> dict:
-    """Wait for FINALIZED, retrying on studionet transient / rate errors."""
     return retry_call(
         client.wait_for_transaction_receipt,
         tx_hash,
@@ -100,13 +105,6 @@ def finalize(client, tx_hash: str) -> dict:
 
 
 def submit_write(client, address, fn, args, account, label, log, leader_only=True, expect_revert=False):
-    """Send one write tx, wait FINALIZED, capture evidence. Returns receipt.
-
-    leader_only=False is required for the non-deterministic evaluate_tactic_live
-    path so it runs through full validator consensus. expect_revert marks calls
-    that must apply no state change (used for the negative checks); their receipt
-    error is recorded but is not treated as a failure.
-    """
     tx_hash = retry_call(
         client.write_contract,
         address, fn, account=account, args=args, leader_only=leader_only,
@@ -120,37 +118,61 @@ def submit_write(client, address, fn, args, account, label, log, leader_only=Tru
         "consensus_result": receipt.get("result_name"),
         "error": receipt.get("error"),
     }
+    leader_receipts = (receipt.get("consensus_data") or {}).get("leader_receipt") or []
+    if leader_receipts:
+        entry["execution_result"] = leader_receipts[0].get("execution_result")
     if expect_revert:
         entry["expected"] = "revert; no state change"
     log.append(entry)
     print(f"  {label}: {entry['status']} / {entry['consensus_result']} {tx_hash}")
-    time.sleep(3)
+    time.sleep(2)
+    return receipt, tx_hash
+
+
+def submit_consensus_write(client, address, fn, args, account, label, log, attempts=6):
+    """Retry a live-consensus write until validators agree (or attempts run out).
+
+    A MAJORITY_DISAGREE on the exact discrete verdict is a clean rollback with no
+    state change, so re-invoking the same call is safe.
+    """
+    receipt = None
+    tx_hash = None
+    for attempt in range(attempts):
+        receipt, tx_hash = submit_write(
+            client, address, fn, args, account,
+            f"{label} (live consensus attempt {attempt + 1})", log,
+            leader_only=False,
+        )
+        if receipt.get("result_name") == "MAJORITY_AGREE":
+            return receipt, tx_hash
     return receipt, tx_hash
 
 
 def main() -> int:
     main_account = create_account(account_private_key=PRIVATE_KEY)
-    client = create_client(chain=studionet, account=main_account)
-    # Second ephemeral signer for community endorsement / co-play.
     peer_account = create_account()
+    challenger_account = create_account()
+    client = create_client(chain=studionet, account=main_account)
 
     source_text = CONTRACT_PATH.read_text(encoding="utf-8")
     source_bytes = source_text.encode("utf-8")
     hash_local = sha256_bytes(source_bytes)
-    hash_deploy = sha256_bytes(source_bytes)  # exact bytes sent to the network
+    hash_deploy = sha256_bytes(source_bytes)
 
     print(f"Main signer: {main_account.address}")
-    print(f"Ephemeral peer signer: {peer_account.address}")
+    print(f"Peer signer: {peer_account.address}")
+    print(f"Challenger signer: {challenger_account.address}")
 
     # ---- deploy ----
-    print("Deploying AegisArena to studionet...")
+    print("Deploying AegisArena Milestone v1 to studionet...")
     deploy_tx = retry_call(client.deploy_contract, code=source_text, args=[], leader_only=True)
     deploy_receipt = finalize(client, deploy_tx)
     address = deploy_receipt.get("data", {}).get("contract_address") or deploy_receipt.get("recipient")
     print(f"  deployed at {address} ({deploy_receipt.get('status_name')})")
 
-    # ---- 3-way sha256 identity ----
+    # ---- on-chain code hash ----
     hash_chain = None
+    deployment_tx = None
     try:
         with urlopen(Request(EXPLORER_ADDR_API + address, headers={"User-Agent": "aegis"}), timeout=30) as resp:
             explorer = json.load(resp)
@@ -159,11 +181,9 @@ def main() -> int:
         deployment_tx = explorer.get("creator_info", {}).get("deployment_tx_hash")
     except Exception as exc:  # noqa: BLE001
         print(f"  explorer code fetch failed: {type(exc).__name__}")
-        onchain_code = ""
-        deployment_tx = None
 
     three_way_match = bool(hash_chain) and hash_local == hash_deploy == hash_chain
-    print(f"  3-way sha256 match: {three_way_match}")
+    print(f"  local/deploy/onchain sha256 match: {three_way_match}")
 
     log = []
     log.append({
@@ -175,172 +195,245 @@ def main() -> int:
         "contract_address": address,
     })
 
-    # ---- seeding ----
-    print("Seeding reviewer state...")
-    # A fast, reliable public reference page with a mandatory token every
-    # validator can independently verify through the live consensus path.
+    def read(fn, args=None):
+        return retry_call(client.read_contract, address, fn, args=args or [])
+
+    def stat(key):
+        return read("get_arena_stats").get(key)
+
+    def vault():
+        return read("check_vault_invariants")
+
+    def balance(addr):
+        return int(read("get_token_balance", [addr]))
+
+    def tournament(tid):
+        return read("get_tournament", [tid])
+
+    def submission(sid):
+        return read("get_submission", [sid])
+
+    # ---- fund the three signers ----
+    print("Funding signer ledgers from the AGT faucet...")
+    for acct, label in (
+        (main_account, "faucet main"),
+        (peer_account, "faucet peer"),
+        (challenger_account, "faucet challenger"),
+    ):
+        submit_write(client, address, "faucet_or_deposit", [60000], acct, label, log)
+
+    # ---- seed two red-team tournaments ----
+    print("Seeding AI red-team tournaments...")
     ref_url = "https://example.com"
-    ref_token = "Example Domain"
+    token = "Example Domain"
 
-    def read_tournament(i):
-        return retry_call(client.read_contract, address, "get_tournament", args=[i])
-
-    def read_submission(tid, sid):
-        subs = retry_call(client.read_contract, address, "get_tournament_submissions", args=[tid])
-        for s in subs:
-            if int(s["submission_id"]) == sid:
-                return s
-        return {}
-
-    _, _ = submit_write(client, address, "create_tournament", [
-        "Red Team Raid: Lockdown Protocol",
-        "Design a covert network-segmentation plan that isolates the crown-jewel VLAN "
-        "without disrupting hospital telemetry. Ground every claim in the reference source.",
+    submit_write(client, address, "create_tournament", [
+        "Red-Team Gauntlet: Prompt Injection Defense",
+        "Defend a support assistant against prompt injection and jailbreak payloads. "
+        "Ground the defense in the reference source and never leak the system policy.",
         ref_url,
-        ref_token,
-        8000,
-    ], main_account, "create_tournament#1", log)
+        token,
+        PRIZE_T1,
+        CHALLENGE_WINDOW_SECONDS,
+    ], main_account, "create_tournament#1 (funded vault pot)", log)
 
-    _, _ = submit_write(client, address, "create_tournament", [
-        "Blue Team Hardening: Perimeter Reversal",
-        "Produce a prioritized remediation brief that neutralizes the three highest-impact "
-        "perimeter risks for a public fintech API. Cite the reference source.",
+    submit_write(client, address, "create_tournament", [
+        "Jailbreak Arena: Policy Leak Stress Test",
+        "Design a guardrail that survives role-play, encoding and tool-abuse jailbreaks. "
+        "Anchor every claim on the reference source.",
         ref_url,
-        ref_token,
-        6000,
-    ], main_account, "create_tournament#2", log)
+        token,
+        PRIZE_T2,
+        180,
+    ], main_account, "create_tournament#2 (guard revert target)", log)
+
+    print("Submitting defense tactics with defender bonds...")
+    submit_write(client, address, "submit_tactic", [
+        1,
+        "Aegis Alpha",
+        "Defense plan: anchor every answer on Example Domain, treat all user content as hostile, "
+        "strip tool directives before rendering, and refuse role-play that requests the hidden policy. "
+        "Log refusals with a hash of the prompt and replay the jailbreak corpus before each release. "
+        "Escalate any policy leak to a human reviewer within one minute.",
+        BOND,
+    ], main_account, "submit_tactic#1 (Aegis Alpha, main)", log)
 
     submit_write(client, address, "submit_tactic", [
         1,
-        "Valkyrie",
-        "Stage one: micro-segment the clinical VLAN and enforce zero-trust identity at the "
-        "edge before any lateral movement. Anchor the whole plan on Example Domain so telemetry "
-        "stays up while attackers are boxed in. Stage two: deploy canary hosts that alert on any "
-        "unusual east-west flow. Stage three: rotate all service credentials and cut a hardened "
-        "jump-host path for the IR team. Every action maps to defense-in-depth from the reference.",
-    ], main_account, "submit_tactic#1 (Valkyrie, live tournament)", log)
+        "Aegis Beta",
+        "Defense plan: validate the Example Domain reference, wrap untrusted text in a signed "
+        "preamble, deny any instruction that asks to ignore prior rules, and cap output length. "
+        "Run an adversarial corpus in CI and block releases when a jailbreak reproduces. "
+        "Quarantine any tool call that tries to read the system policy.",
+        BOND,
+    ], peer_account, "submit_tactic#2 (Aegis Beta, peer)", log)
 
     submit_write(client, address, "submit_tactic", [
         2,
-        "Nomad",
-        "Prioritize the highest-impact perimeter risks first for the fintech API and keep every "
-        "claim anchored to the Example Domain reference. Enforce deny-by-default object "
-        "authorization, then move secrets to a managed KMS with short-lived tokens, and harden "
-        "injection with parameterized queries and strict server-side validation before shipping.",
-    ], peer_account, "submit_tactic#2 (Nomad, peer signer, unevaluated tournament)", log)
+        "Jailbreak Nomad",
+        "Defense plan: pin the Example Domain reference and encode the policy in a signed preamble. "
+        "Reject encoding tricks, tool abuse and role-play that requests secrets. "
+        "Log every refusal and replay the corpus weekly.",
+        BOND,
+    ], peer_account, "submit_tactic#3 (unevaluated, guard target)", log)
 
-    # A freshly submitted tactic must NOT take the lead before live consensus.
-    t1_before = read_tournament(1)
-    leader_before_eval = t1_before.get("current_leader")
-    best_before_eval = int(t1_before.get("best_score", 0))
+    v0 = vault()
+    print("  vault after funding and bonds:", v0)
+    assert v0["invariant_ok"], v0
 
-    # ---- real live-consensus evaluation on studionet (full validator path) ----
-    # Requiring validators to agree on the exact quantized verdict can, on rare
-    # runs, end in MAJORITY_DISAGREE. That is a clean rollback (no state change,
-    # the submission stays unevaluated), so re-invoking is safe. Retry until the
-    # network reaches consensus, bounded to avoid an infinite loop.
+    # ---- guard revert 1: premature settlement while the window is still open ----
+    print("Guard revert 1: premature settlement before the challenge window closes...")
+    submit_write(client, address, "settle_tournament", [1], main_account,
+                 "guard_revert_premature_settle#1", log, expect_revert=True)
+    premature_blocked = tournament(1)["status"] == "OPEN"
+    assert premature_blocked, "premature settlement must not change status"
+
+    # ---- first live consensus evaluation ----
     print("Running live consensus evaluation on submission #1...")
-    eval_tx = None
-    for attempt in range(5):
-        _eval_receipt, eval_tx = submit_write(client, address, "evaluate_tactic_live", [1], main_account,
-                     f"evaluate_tactic_live#1 (full validator consensus, attempt {attempt + 1})", log,
-                     leader_only=False)
-        if _eval_receipt.get("result_name") == "MAJORITY_AGREE":
-            break
-    else:
-        print("  WARNING: live consensus did not converge on an exact verdict after retries")
+    submit_consensus_write(client, address, "evaluate_submission_live", [1], main_account,
+                           "evaluate_submission_live#1", log)
+    sub1 = submission(1)
+    assert sub1["evaluated"] is True, sub1
+    print(f"  sub1 band={sub1.get('defense_band')} anchor={sub1.get('robustness_anchor')} total={sub1.get('total_score')}")
 
-    sub1_eval = read_submission(1, 1)
-    t1_after_eval = read_tournament(1)
-    leader_after_eval = t1_after_eval.get("current_leader")
-    best_after_eval = int(t1_after_eval.get("best_score", 0))
-    eval_verified = (
-        sub1_eval.get("evaluated") is True
-        and int(sub1_eval.get("ai_verdict_score", -1)) % 5 == 0
-        and best_after_eval == int(sub1_eval.get("total_score", -1))
-        and leader_after_eval == sub1_eval.get("player")
-    )
+    # ---- file the exploit challenge immediately, before the window can close ----
+    print("Filing an exploit challenge with a matching bond...")
+    submit_write(client, address, "challenge_defense_submission", [
+        1,
+        "https://example.com",
+        int(sub1["defender_bond"]),
+    ], challenger_account, "challenge_defense_submission#1 (matching bond)", log)
 
-    # ---- community endorsement from a second signer (leader/score sync) ----
+    bundle1 = read("get_tournament_bundle", [1])
+    pending = [c for c in bundle1["challenges"] if c["status"] == "PENDING"]
+    assert pending, "expected a pending challenge"
+    challenge_id = int(pending[-1]["challenge_id"])
+    v1 = vault()
+    print("  vault with challenger bond locked:", v1)
+    assert v1["invariant_ok"], v1
+
+    # ---- second live evaluation gives a fallback leader if #1 is slashed ----
+    print("Running live consensus evaluation on submission #2...")
+    submit_consensus_write(client, address, "evaluate_submission_live", [2], peer_account,
+                           "evaluate_submission_live#2", log)
+    sub2 = submission(2)
+    assert sub2["evaluated"] is True, sub2
+    print(f"  sub2 band={sub2.get('defense_band')} anchor={sub2.get('robustness_anchor')} total={sub2.get('total_score')}")
+
+    # ---- multi-signer endorsements ----
+    print("Adding multi-signer community endorsements...")
     submit_write(client, address, "endorse_submission", [1], peer_account,
                  "endorse_submission#1 (peer signer)", log)
-    sub1_end = read_submission(1, 1)
-    t1_after_endorse = read_tournament(1)
-    best_after_endorse = int(t1_after_endorse.get("best_score", 0))
-    endorse_sync_verified = (
-        best_after_endorse == best_after_eval + 2
-        and best_after_endorse == int(sub1_end.get("total_score", -1))
-        and t1_after_endorse.get("current_leader") == leader_after_eval
-    )
+    submit_write(client, address, "endorse_submission", [2], challenger_account,
+                 "endorse_submission#2 (challenger signer)", log)
+    submit_write(client, address, "endorse_submission", [2], main_account,
+                 "endorse_submission#2 (main signer)", log)
 
     submit_write(client, address, "post_arena_comment", [
-        1, 1, "Nomad",
-        "Strong segmentation-first ordering, though I would front-load the telemetry continuity risk.",
-        "ANALYSIS",
-    ], peer_account, "post_arena_comment#1 (peer signer)", log)
+        1, 1, "Challenger",
+        "The policy leak gate looks solid, but I am probing the tool-abuse path.",
+        "CHALLENGE",
+    ], challenger_account, "post_arena_comment#1 (challenger signer)", log)
 
-    # ---- expected rollback A: settle tournament #2 with no live evaluation ----
-    # Tournament #2 has an entry that never completed evaluate_tactic_live, so
-    # settlement must revert and leave the tournament OPEN.
-    _, rb_settle_tx = submit_write(client, address, "settle_tournament", [2], main_account,
-                                    "rollback_settle#2 (no live-evaluated winner, must revert)", log,
-                                    expect_revert=True)
-    time.sleep(2)
-    t2_state = read_tournament(2)
-    rollback_settle_ok = (
-        t2_state.get("status") == "OPEN"
-        and int(t2_state.get("best_score", 0)) == 0
-    )
+    # ---- wait for the challenge window to close ----
+    clock = int(tournament(1)["challenge_window_clock"])
+    wait = clock - int(time.time()) + 3
+    if wait > 0:
+        print(f"  waiting {wait}s for the challenge window to close...")
+        time.sleep(wait)
 
-    # ---- settle tournament #1 pays the live-evaluated on-chain leader ----
+    # ---- guard revert 2: settle an unevaluated tournament ----
+    print("Guard revert 2: settle tournament #2 with no live-evaluated submission...")
+    submit_write(client, address, "settle_tournament", [2], main_account,
+                 "guard_revert_unevaluated_settle#2", log, expect_revert=True)
+    t2_state = tournament(2)
+    unevaluated_blocked = t2_state["status"] == "OPEN"
+    assert unevaluated_blocked, "unevaluated tournament must stay OPEN"
+
+    # ---- guard revert 3: settle while an exploit challenge is open ----
+    print("Guard revert 3: settle tournament #1 while its exploit challenge is open...")
     submit_write(client, address, "settle_tournament", [1], main_account,
-                 "settle_tournament#1 (live-evaluated winner)", log)
-    t1_settled = read_tournament(1)
-    settle_winner_verified = (
-        t1_settled.get("status") == "SETTLED"
-        and t1_settled.get("winner") == leader_after_eval
-        and t1_settled.get("winner") == sub1_eval.get("player")
-    )
+                 "guard_revert_open_challenge_settle#1", log, expect_revert=True)
+    open_challenge_blocked = tournament(1)["status"] == "OPEN"
+    assert open_challenge_blocked, "open challenge must block settlement"
 
-    # ---- expected rollback B: endorse a submission after its tournament settled ----
-    sub1_pre_rb = read_submission(1, 1)
-    _, rb_endorse_tx = submit_write(client, address, "endorse_submission", [1], peer_account,
-                                     "rollback_endorse#1 (post-settlement, must revert)", log,
-                                     expect_revert=True)
+    # ---- resolve the exploit challenge with live consensus ----
+    print("Resolving the exploit challenge with live consensus...")
+    submit_consensus_write(client, address, "resolve_exploit_challenge_live", [challenge_id],
+                           main_account, f"resolve_exploit_challenge_live#{challenge_id}", log)
+    resolved = read("get_challenge", [challenge_id])
+    assert resolved.get("status") != "PENDING", resolved
+    print(f"  challenge status={resolved.get('status')} band={resolved.get('defense_band')}")
+    v2 = vault()
+    print("  vault after challenge resolution:", v2)
+    assert v2["invariant_ok"], v2
+
+    # ---- settle the tournament ----
+    print("Settling tournament #1 to the invariant winner...")
+    winner_expected = tournament(1)["current_leader"]
+    prize_before = balance(winner_expected)
+    submit_write(client, address, "settle_tournament", [1], main_account,
+                 "settle_tournament#1 (invariant winner)", log)
+    t1_settled = tournament(1)
+    winner = t1_settled["winner"]
+    assert winner == winner_expected, "settlement winner must equal the stored leader"
+    winner_sub = None
+    for sid in (1, 2):
+        s = submission(sid)
+        if s["player"] == winner:
+            winner_sub = s
+    assert winner_sub is not None and winner_sub["evaluated"] and not winner_sub["slashed"], winner_sub
+    print(f"  winner {winner} via submission #{winner_sub['submission_id']}")
+
+    winner_acct = main_account if winner.lower() == main_account.address.lower() else peer_account
     time.sleep(2)
-    sub1_post_rb = read_submission(1, 1)
-    rollback_endorse_ok = (
-        int(sub1_post_rb.get("endorsements", -1)) == int(sub1_pre_rb.get("endorsements", 0))
-        and int(sub1_post_rb.get("total_score", -1)) == int(sub1_pre_rb.get("total_score", -1))
-    )
+    prize_after = balance(winner)
+    print(f"  winner AGT balance {prize_before} -> {prize_after}")
 
-    # ---- read back final state ----
-    all_tournaments = retry_call(client.read_contract, address, "get_all_tournaments", args=[])
-    subs_1 = retry_call(client.read_contract, address, "get_tournament_submissions", args=[1])
-    subs_2 = retry_call(client.read_contract, address, "get_tournament_submissions", args=[2])
-    comments_1 = retry_call(client.read_contract, address, "get_tournament_comments", args=[1])
-    leaderboard = retry_call(client.read_contract, address, "get_leaderboard", args=[])
-    stats = retry_call(client.read_contract, address, "get_arena_stats", args=[])
+    # ---- transfer_tokens proves the prize receipt is spendable ----
+    print("Transferring part of the prize receipt to the peer ledger...")
+    transfer_to = main_account.address if winner_acct is peer_account else peer_account.address
+    submit_write(client, address, "transfer_tokens", [transfer_to, 500], winner_acct,
+                 "transfer_tokens (prize receipt)", log)
+
+    # ---- guard revert 4: post-settlement endorsement ----
+    print("Guard revert 4: endorse a submission after settlement...")
+    pre_endorse = submission(int(winner_sub["submission_id"]))
+    submit_write(client, address, "endorse_submission", [int(winner_sub["submission_id"])],
+                 challenger_account, "guard_revert_post_settle_endorse", log, expect_revert=True)
+    post_endorse = submission(int(winner_sub["submission_id"]))
+    endorse_blocked = post_endorse["endorsements"] == pre_endorse["endorsements"]
+    assert endorse_blocked, "post-settlement endorsement must not apply"
+
+    # ---- liveness recovery: cancel the stalled unevaluated tournament ----
+    print("Recovering the stalled tournament: permissionless cancel and refund...")
+    _, recovery_tx = submit_write(client, address, "cancel_tournament", [2], challenger_account,
+                                  "cancel_tournament#2 (stalled recovery by third party)", log)
+    stalled_recovered = tournament(2)["status"] == "CANCELLED"
+    assert stalled_recovered, "stalled tournament must be cancellable after the window"
+
+    # ---- final reads ----
+    v3 = vault()
+    stats = read("get_arena_stats")
+    bundle1 = read("get_tournament_bundle", [1])
+    bundle2 = read("get_tournament_bundle", [2])
+    leaderboard = read("get_leaderboard")
 
     print("\nFinal on-chain state:")
     print("  stats:", stats)
-    print("  T1 leader before eval:", leader_before_eval, "best:", best_before_eval)
-    print("  T1 leader after eval:", leader_after_eval, "best:", best_after_eval)
-    print("  T1 best after endorse:", best_after_endorse, "(endorse sync:", endorse_sync_verified, ")")
-    print("  T1 settled winner matches live leader:", settle_winner_verified)
-    print("  T2 settle blocked without live evaluation:", rollback_settle_ok)
-    print("  T1 endorse-after-settle blocked:", rollback_endorse_ok)
+    print("  vault invariant:", v3)
+    print("  T1:", tournament(1)["status"], "winner", winner)
+    print("  T2:", tournament(2)["status"], "stalled recovery:", stalled_recovered)
 
-    invariant = {
-        "submit_does_not_take_lead": best_before_eval == 0,
-        "live_evaluation_sets_leader": eval_verified,
-        "endorsement_syncs_leader_and_score": endorse_sync_verified,
-        "settle_requires_live_evaluated_winner": rollback_settle_ok,
-        "settle_pays_live_leader": settle_winner_verified,
-        "endorse_blocked_after_settle": rollback_endorse_ok,
-    }
+    guard_reverts = [
+        {"name": "premature_settlement_before_window", "blocked": premature_blocked},
+        {"name": "unevaluated_leader_settlement", "blocked": unevaluated_blocked},
+        {"name": "settlement_with_open_challenge", "blocked": open_challenge_blocked},
+        {"name": "post_settlement_endorsement", "blocked": endorse_blocked},
+    ]
 
     evidence = {
+        "milestone": "v1",
         "network": "studionet",
         "chain_id": 61999,
         "rpc": "https://studio.genlayer.com/api",
@@ -349,37 +442,59 @@ def main() -> int:
         "deploy_tx": deploy_tx,
         "deploy_status": deploy_receipt.get("status_name"),
         "deploy_consensus_result": deploy_receipt.get("result_name"),
-        "creator_address": main_account.address,
-        "peer_address": peer_account.address,
+        "signers": {
+            "main": main_account.address,
+            "peer": peer_account.address,
+            "challenger": challenger_account.address,
+        },
         "sha256": {
-            "local_file": hash_local,
+            "local_lf_file": hash_local,
             "deploy_payload": hash_deploy,
-            "onchain_explorer_contract_code": hash_chain,
-            "three_way_match": three_way_match,
+            "onchain_explorer_code": hash_chain,
+            "local_deploy_onchain_match": three_way_match,
+            "git_blob": None,
+            "remote_github_blob": None,
+            "four_way_match": False,
             "explorer_deployment_tx": deployment_tx,
         },
         "transactions": log,
-        "score_invariant_checks": invariant,
-        "live_evaluation_tx_evidence": {
-            "submission_id": 1,
-            "consensus_tx_hash": eval_tx,
-            "evaluated": sub1_eval.get("evaluated"),
-            "ai_verdict_score": sub1_eval.get("ai_verdict_score"),
-            "total_score": sub1_eval.get("total_score"),
-            "leader_after_eval": leader_after_eval,
+        "guard_reverts": guard_reverts,
+        "stalled_recovery": {
+            "tournament_id": 2,
+            "tx_hash": recovery_tx,
+            "recovered": stalled_recovered,
+            "triggered_by": challenger_account.address,
         },
-        "rollback_checks": {
-            "settle_unevaluated_tournament_tx": rb_settle_tx,
-            "tournament_2_left_open": rollback_settle_ok,
-            "endorse_after_settle_tx": rb_endorse_tx,
-            "endorse_after_settle_left_score_unchanged": rollback_endorse_ok,
+        "vault_checks": {
+            "after_funding_and_bonds": v0,
+            "with_challenger_bond": v1,
+            "after_challenge_resolution": v2,
+            "final": v3,
+        },
+        "live_evaluation": {
+            "submission_1": {
+                "band": sub1.get("defense_band"),
+                "anchor": sub1.get("robustness_anchor"),
+                "total_score": sub1.get("total_score"),
+                "rationale": sub1.get("judge_rationale"),
+            },
+            "submission_2": {
+                "band": sub2.get("defense_band"),
+                "anchor": sub2.get("robustness_anchor"),
+                "total_score": sub2.get("total_score"),
+                "rationale": sub2.get("judge_rationale"),
+            },
+            "challenge": resolved,
+        },
+        "prize_receipt": {
+            "winner": winner,
+            "balance_before_read": prize_before,
+            "balance_after_read": prize_after,
         },
         "final_state": {
             "arena_stats": stats,
-            "tournaments": all_tournaments,
-            "tournament_1_submissions": subs_1,
-            "tournament_2_submissions": subs_2,
-            "tournament_1_comments": comments_1,
+            "tournament_1": bundle1,
+            "tournament_2": bundle2,
             "leaderboard": leaderboard,
         },
     }
@@ -393,15 +508,17 @@ def main() -> int:
     ok = (
         deploy_receipt.get("status_name") == "FINALIZED"
         and three_way_match
-        and all(invariant.values())
+        and v3["invariant_ok"]
         and stats.get("total_tournaments", 0) == 2
-        and stats.get("total_submissions", 0) == 2
-        and stats.get("evaluated_submissions", 0) >= 1
-        and stats.get("total_endorsements", 0) >= 1
-        and stats.get("total_comments", 0) >= 1
+        and stats.get("total_submissions", 0) == 3
+        and stats.get("evaluated_submissions", 0) >= 2
+        and stats.get("total_endorsements", 0) >= 3
+        and stats.get("total_challenges", 0) >= 1
         and stats.get("settled", 0) >= 1
+        and stalled_recovered
+        and all(g["blocked"] for g in guard_reverts)
     )
-    print("DEPLOY+SEED OK:", ok, "| invariant:", invariant)
+    print("DEPLOY+SEED OK:", ok)
     return 0 if ok else 1
 
 

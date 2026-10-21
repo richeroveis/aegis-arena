@@ -1,12 +1,12 @@
-// Records a subtitled executive demo of the AegisArena frontend.
+// Records a 48s subtitled, audio-backed Milestone v1 demo of AegisArena.
 //
 //   node tools/record_demo.mjs
 //
-// Requires the Vite dev server running on http://localhost:5173/aegis-arena/.
-// Produces a raw Playwright webm in frontend/video-raw/ and then converts it
-// to docs/demo-video-subtitled.mp4 (also copied to frontend/public/demo-video.mp4).
-// Subtitles are rendered as a DOM overlay inside the page, so they are baked
-// into the recorded frames.
+// Requires the Vite dev server on http://localhost:5173/aegis-arena/ and the
+// soundtrack at ../tools/out/soundtrack.wav (python tools/generate_soundtrack.py).
+// Produces a raw Playwright webm in frontend/video-raw/ and muxes it to
+// docs/demo-video-subtitled.mp4 and frontend/public/demo-video-subtitled.mp4
+// with H.264 video and AAC stereo audio.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -14,49 +14,70 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
-import ffmpegPath from "ffmpeg-static";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const RAW_DIR = path.join(ROOT, "video-raw");
 const DOCS_OUT = path.join(ROOT, "..", "docs", "demo-video-subtitled.mp4");
-const PUBLIC_OUT = path.join(ROOT, "public", "demo-video.mp4");
+const PUBLIC_OUT = path.join(ROOT, "public", "demo-video-subtitled.mp4");
+const AUDIO = process.env.AUDIO_PATH || path.join(ROOT, "..", "tools", "out", "soundtrack.wav");
 const URL = "http://localhost:5173/aegis-arena/";
 const VIEWPORT = { width: 1280, height: 720 };
+const DURATION = 48;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SUBTITLES = {
   welcome:
-    "Welcome to AegisArena: Verifiable AI Red-Team & Fact-Tactics Tournament on GenLayer studionet.",
+    "AegisArena Milestone v1: verifiable AI red-team defense arena on GenLayer studionet.",
   burner:
-    "Step 1: The 1-click Burner Wallet instantly initializes a live account with zero friction.",
+    "Step 1: a 1-click burner identity connects instantly, with no seed phrase or extension.",
   browse:
-    "Step 2: Browsing pre-seeded on-chain tournaments and live reference URLs.",
-  submit:
-    "Step 5: Submitting a tactical payload with the required mandatory fact token.",
-  consensus:
-    "Step 6: Triggering live validator consensus via gl.eq_principle.prompt_comparative.",
+    "Step 2: funded tournaments stream from chain, each pot locked in the AGT custody vault.",
+  window:
+    "Step 3: the challenge window monitor shows PAPITO max-liability locking of pot and bonds.",
+  bands:
+    "Step 4: live consensus scores every defense on a discrete 4-anchor ladder, from IRONCLAD_IMMUNE to JAILBROKEN_SLASH.",
+  simulator:
+    "Step 5: the What-If simulator models pot, bonds, endorsements and anchor to show the exact AGT slash or payout.",
+  guard:
+    "Step 6: the Security Guard Lab verifies the vault invariant and offers live revert probes.",
+  inspector:
+    "Step 7: the consensus inspector reveals the exact judge prompt and the comparative equivalence principle.",
+  close:
+    "Milestone v1: bonded red-team duels, discrete consensus bands, and one invariant for ranking and settlement.",
 };
 
-async function findLocalChromium() {
-  // Prefer a locally present browser build over downloading a new one.
-  const base = path.join(process.env.LOCALAPPDATA || "", "ms-playwright");
+function findChrome() {
   const candidates = [
-    path.join(base, "chromium-1148", "chrome-win", "chrome.exe"),
-    path.join(base, "chromium_headless_shell-1148", "chrome-headless-shell-win64", "chrome-headless-shell.exe"),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+    process.env.CHROME_PATH,
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
   }
-  return null;
+  return undefined;
+}
+
+function runFfmpeg(args) {
+  const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
+  execFileSync(ffmpeg, args, { stdio: "inherit" });
 }
 
 async function main() {
   fs.mkdirSync(RAW_DIR, { recursive: true });
+  if (!fs.existsSync(AUDIO)) {
+    throw new Error(`soundtrack missing at ${AUDIO}; run python tools/generate_soundtrack.py`);
+  }
 
-  const executablePath = await findLocalChromium();
-  const browser = await chromium.launch(executablePath ? { headless: true, executablePath } : { headless: true });
+  const executablePath = findChrome();
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath,
+    args: executablePath ? ["--no-sandbox", "--disable-dev-shm-usage"] : [],
+  });
   const context = await browser.newContext({
     viewport: VIEWPORT,
     recordVideo: { dir: RAW_DIR, size: VIEWPORT },
@@ -64,7 +85,6 @@ async function main() {
   });
   const page = await context.newPage();
 
-  // Fake on-screen cursor so viewers can follow the interactions.
   await page.addInitScript(() => {
     const el = document.createElement("div");
     el.id = "__demo_cursor";
@@ -84,8 +104,6 @@ async function main() {
       el.style.left = `${e.clientX}px`;
       el.style.top = `${e.clientY}px`;
     });
-    // Extra bottom room so the transaction stepper can be scrolled clear of
-    // the caption band.
     const style = document.createElement("style");
     style.textContent = ".app { padding-bottom: 240px !important; }";
     const injectCss = () => document.head.appendChild(style);
@@ -104,10 +122,10 @@ async function main() {
         box.id = "__demo_subtitle";
         box.style.cssText = [
           "position:fixed;left:50%;bottom:26px;transform:translateX(-50%)",
-          "max-width:1080px;z-index:99999;pointer-events:none",
+          "max-width:1120px;z-index:99999;pointer-events:none",
           "background:rgba(0,0,0,.82);color:#fff;padding:12px 24px",
           "border-radius:10px;border:1px solid rgba(34,226,255,.55)",
-          "font:600 22px/1.35 'Segoe UI',system-ui,sans-serif",
+          "font:600 21px/1.35 'Segoe UI',system-ui,sans-serif",
           "text-align:center;text-shadow:0 1px 3px #000",
           "box-shadow:0 6px 24px rgba(0,0,0,.6)",
         ].join(";");
@@ -117,91 +135,69 @@ async function main() {
     }, SUBTITLES[key]);
   };
 
-  const scrollCenter = async (locator) => {
-    await locator.evaluate((el) => el.scrollIntoView({ block: "center" })).catch(() => {});
+  const scrollTo = async (locator) => {
+    try {
+      await locator.scrollIntoViewIfNeeded({ timeout: 5000 });
+      await sleep(600);
+    } catch {
+      /* keep the demo moving if a selector is absent */
+    }
   };
 
   try {
-    // ---- Subtitle 1: load the arena and let on-chain data stream in ----
     await page.goto(URL, { waitUntil: "domcontentloaded" });
     await setSubtitle("welcome");
-    await page
-      .locator("text=Red Team Raid")
-      .first()
-      .waitFor({ state: "visible", timeout: 60000 });
+    await page.locator(".tlist .tcard").first().waitFor({ state: "visible", timeout: 60000 });
     await sleep(5000);
 
-    // ---- Subtitle 2: one-click burner wallet ----
     await setSubtitle("burner");
     await page.getByRole("button", { name: "Enter Arena (1-click burner)" }).click();
-    await page.locator(".badge", { hasText: "burner" }).first().waitFor({ timeout: 10000 });
+    await page.locator(".badge", { hasText: "burner" }).first().waitFor({ timeout: 15000 }).catch(() => {});
     await sleep(4000);
 
-    // ---- Subtitle 3: browse seeded tournaments and reference sources ----
     await setSubtitle("browse");
     const cards = page.locator(".tlist .tcard");
-    const cardCount = await cards.count();
-    if (cardCount > 1) {
+    if ((await cards.count()) > 1) {
       await cards.nth(1).click();
       await sleep(2500);
     }
     await cards.first().click();
-    await page
-      .getByRole("heading", { level: 2, name: /Red Team Raid/ })
-      .waitFor({ state: "visible", timeout: 20000 });
-    await page.locator('a:has-text("Reference source")').first().scrollIntoViewIfNeeded();
-    await sleep(3000);
+    await sleep(2500);
 
-    // ---- Subtitle 4: quick-fill and submit a tactic on-chain ----
-    await setSubtitle("submit");
-    await page.getByRole("button", { name: "Quick Fill Demo Tactic" }).click();
-    await page.locator("text=mandatory token present").first().waitFor({ timeout: 5000 });
-    await sleep(2200); // let viewers read the pre-flight checks
-    await page.getByRole("button", { name: "Submit Tactic to GenLayer" }).click();
+    await setSubtitle("window");
+    await scrollTo(page.getByRole("heading", { name: /Red-Team Exploit Duel/ }));
+    await sleep(5000);
 
-    // Keep the transaction lifecycle stepper on camera while the write is
-    // in flight (signing -> broadcast -> validator consensus -> finalized).
-    const stepper = page.locator(".stepper").first();
-    await stepper.waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
-    await scrollCenter(stepper);
+    await setSubtitle("bands");
+    await scrollTo(page.getByRole("heading", { name: /Ranked Defenses/ }));
+    await sleep(5000);
 
-    let finalized = true;
-    try {
-      await page
-        .locator("text=Tactic submitted on-chain")
-        .first()
-        .waitFor({ state: "visible", timeout: 30000 });
-    } catch {
-      finalized = false;
-    }
+    await setSubtitle("simulator");
+    await scrollTo(page.getByRole("heading", { name: /What-If Red-Team Exploit/ }));
+    const sim = page.locator("section", { has: page.getByRole("heading", { name: /What-If Red-Team Exploit/ }) }).first();
+    await sim.getByRole("button", { name: "0", exact: true }).click().catch(() => {});
     await sleep(1500);
+    await sim.getByRole("button", { name: "100", exact: true }).click().catch(() => {});
+    await sleep(1500);
+    await sim.getByRole("button", { name: /Simulate settlement/ }).click().catch(() => {});
+    await sleep(5000);
 
-    // ---- Subtitle 6: trigger the live AI consensus path ----
-    await setSubtitle("consensus");
-    let clicked = false;
-    if (finalized) {
-      const evalBtn = page
-        .locator(".sub", { hasText: "pending" })
-        .first()
-        .locator('button:has-text("Trigger Live AI Consensus")');
-      try {
-        await evalBtn.waitFor({ state: "visible", timeout: 6000 });
-        await evalBtn.scrollIntoViewIfNeeded();
-        await sleep(700);
-        await evalBtn.click();
-        clicked = true;
-        // Put the stepper back in frame for the consensus broadcast.
-        await sleep(1500);
-        const stepper2 = page.locator(".stepper").first();
-        await stepper2.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
-        await scrollCenter(stepper2);
-      } catch {
-        /* button disabled or absent; submit stepper still tells the story */
-      }
-    }
-    await sleep(clicked ? 15000 : 3500);
+    await setSubtitle("guard");
+    await scrollTo(page.getByRole("heading", { name: /Security Guard Lab/ }));
+    const lab = page.locator("section", { has: page.getByRole("heading", { name: /Security Guard Lab/ }) }).first();
+    await lab.getByRole("button", { name: /Verify vault invariant/ }).click().catch(() => {});
+    await sleep(5000);
+
+    await setSubtitle("inspector");
+    const inspect = page.getByRole("button", { name: /Inspect Consensus Prompt/ }).first();
+    await scrollTo(inspect);
+    await inspect.click().catch(() => {});
+    await sleep(6000);
+
+    await setSubtitle("close");
+    await sleep(3000);
   } finally {
-    await context.close(); // finalizes the recording
+    await context.close();
     await browser.close();
   }
 
@@ -213,62 +209,37 @@ async function main() {
   console.log("raw webm:", webm);
 
   const tmpOut = path.join(RAW_DIR, "demo-temp.mp4");
-  execFileSync(
-    ffmpegPath,
-    [
+  const encode = (out, crf) =>
+    runFfmpeg([
       "-y",
-      "-i",
-      webm,
-      "-c:v",
-      "libx264",
-      "-crf",
-      "24",
-      "-preset",
-      "veryfast",
-      "-pix_fmt",
-      "yuv420p",
-      "-r",
-      "25",
-      "-an",
-      "-movflags",
-      "+faststart",
-      tmpOut,
-    ],
-    { stdio: "inherit" },
-  );
+      "-i", webm,
+      "-i", AUDIO,
+      "-vf", `scale=${VIEWPORT.width}:${VIEWPORT.height},fps=30,tpad=stop_mode=clone:stop_duration=8`,
+      "-t", String(DURATION),
+      "-c:v", "libx264",
+      "-crf", String(crf),
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-ac", "2",
+      "-af", `apad=whole_dur=${DURATION}`,
+      "-movflags", "+faststart",
+      out,
+    ]);
 
+  encode(tmpOut, 26);
   let size = fs.statSync(tmpOut).size;
   let out = tmpOut;
-  if (size > 15 * 1024 * 1024) {
-    out = path.join(RAW_DIR, "demo-temp-24.mp4");
-    execFileSync(
-      ffmpegPath,
-      [
-        "-y",
-        "-i",
-        webm,
-        "-c:v",
-        "libx264",
-        "-crf",
-        "30",
-        "-preset",
-        "veryfast",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        "25",
-        "-an",
-        "-movflags",
-        "+faststart",
-        out,
-      ],
-      { stdio: "inherit" },
-    );
+  if (size > 9.5 * 1024 * 1024) {
+    out = path.join(RAW_DIR, "demo-temp-30.mp4");
+    encode(out, 31);
     size = fs.statSync(out).size;
   }
   console.log(`mp4 size: ${(size / 1024 / 1024).toFixed(2)} MB`);
 
   fs.mkdirSync(path.dirname(DOCS_OUT), { recursive: true });
+  fs.mkdirSync(path.dirname(PUBLIC_OUT), { recursive: true });
   fs.copyFileSync(out, DOCS_OUT);
   fs.copyFileSync(out, PUBLIC_OUT);
   console.log("saved:", DOCS_OUT);

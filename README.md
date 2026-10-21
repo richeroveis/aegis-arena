@@ -2,133 +2,175 @@
 
 # AegisArena
 
-AegisArena is a multiplayer tactical tournament and battle-resolution dapp built as a
-GenLayer Intelligent Contract. Players compete in live, web-grounded tactical challenges,
-GenLayer validators verify each outcome against real web sources using an LLM comparative
-equivalence principle, and the community can endorse and discuss battles entirely on-chain.
+**Verifiable AI Red-Team & Jailbreak Defense Benchmark Arena** on GenLayer.
+
+AegisArena is a GenLayer Intelligent Contract where defenders publish AI guardrail
+tactics, red-team challengers stake bonds against them, and GenLayer validators settle
+the outcome against live web evidence. It is a funded custody arena: tournament pots,
+defender bonds and challenger bonds are held in the on-chain `AGT` vault, and payout or
+slashing follows one deterministic invariant that validators can independently verify.
 
 - Live site: https://richeroveis.github.io/aegis-arena/
-- Contract (studionet, chain id 61999): `0x09a0D07800547074a7D1f7c48B96208ee653d5DA`
-- Explorer: https://explorer-studio.genlayer.com/address/0x09a0D07800547074a7D1f7c48B96208ee653d5DA
-- Deploy tx: `0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6`
+- Contract (studionet, chain id 61999): `0x35c9359795829DA2Aafc821aAc7d3d65E6d66f53`
+- Explorer: https://explorer-studio.genlayer.com/address/0x35c9359795829DA2Aafc821aAc7d3d65E6d66f53
+- Deploy tx: `0xcd11529b1eee7aced71fa7fc69287908ea647824e5f5ad5dd9b82cb8bafb0a38`
+- Demo video: `docs/demo-video-subtitled.mp4` (also served at `/aegis-arena/demo-video-subtitled.mp4`)
+- On-chain proof: `evidence/studionet_deployment.json` and `docs/evidence.md`
 
-The arena is already seeded on-chain with two tournaments: one live-evaluated
-and SETTLED to its verified on-chain leader, and one still OPEN whose settlement
-is correctly blocked because none of its entries finished the live consensus
-evaluation. It also has ranked submissions, a real validator-consensus verdict,
-a community endorsement from a second signer, and an on-chain comment, so a
-reviewer opening the live site immediately sees a populated arena fetched from
-studionet.
+The arena is seeded on studionet with funded tournaments, bonded defense submissions,
+multi-signer endorsements, live validator consensus evaluations, an exploit challenge,
+four expected guard reverts, a real prize receipt and a spendable `transfer_tokens` payout.
 
-## Resolution invariants (steward review "zoefunds")
+## Milestone v1 capabilities
 
-- Mandatory live consensus: a submission can only lead or win a tournament after
-  it finishes `evaluate_tactic_live`, the neutral live GenLayer consensus path.
-  `settle_tournament` reverts with
-  `"cannot settle tournament without a live-evaluated winning submission"` if the
-  winning submission was never live-evaluated.
-- No creator/owner bypass: the former `score_tactic_deterministic` method is
-  removed. Only `evaluate_tactic_live` can mark a submission evaluated. Its LLM
-  verdict is snapped onto a fixed 5-point grid (0, 5, 10, ..., 60) and validators
-  must agree on the exact quantized integer.
-- One consistent score: the stored leader, `best_score`, and the settlement
-  winner always follow `min(100, deterministic_score + ai_verdict_score +
-  endorsements * 2)`, recomputed by a single `_sync_leader_if_evaluated` helper
-  on every evaluation and endorsement, and again inside settlement.
-- Frozen after terminal status: endorsements that would change scores revert once
-  a tournament is `SETTLED` or `CANCELLED`.
+### 1. Zero owner or creator bypass
 
-## Deployment provenance
+There is no `owner` field and no deterministic scoring method. The only path that marks a
+submission evaluated and assigns a defense standing is `evaluate_submission_live`, which
+runs through `gl.eq_principle.prompt_comparative`. `settle_tournament` is permissionless
+and pays only the invariant-derived leader. Proven by
+`test_no_owner_or_deterministic_backdoor_exists`.
 
-- Deployed contract tag: `studionet-v1` (points at the commit that contains this
-  exact `contracts/aegis_arena.py`).
-- Contract file sha256, identical across local file, deploy payload, on-chain
-  explorer code and the git blob:
-  `fbf039ac7a8d39eb9bc8ade29dea5ee2cc488c8873501d860b6ab74215aabb9e`
-- Deploy tx: `0xfd5e1a6327bba4a5f20da22c154215748e9a720889367d787e6af8948ba97fc6`
-- Per-transaction on-chain evidence, including the live-consensus evaluation,
-  the endorsement leader/score sync and both negative rollbacks:
-  `evidence/studionet_deployment.json`
+### 2. AGT custody vault and PAPITO max-liability lock
 
-The contract source at the tagged commit is byte-for-byte the source deployed to
-studionet; later commits only add CI and documentation and do not touch
-`contracts/aegis_arena.py`.
+The contract holds real test custody:
 
-## Why GenLayer
+- `vault_custody_balance: u256`
+- `token_balances: TreeMap[Address, u256]`
+- `faucet_or_deposit(amount)`
+- `transfer_tokens(to_hex, amount)`
+- prize receipts paid from the vault at settlement
 
-AegisArena needs consensus for the part that is subjective and externally sourced: judging
-whether a player's tactical submission is factually aligned with a live reference page. That
-judgment determines scores, the tournament leader, and ultimately who receives the prize pool.
-A plain backend could not make that decision in a way that is independently reproducible by
-multiple validators. The deterministic parts (input validation, the mandatory-token gate, and
-the structural score) run identically on every node; only the web-grounded quality judgment
-goes through validator consensus.
+`check_vault_invariants()` proves:
 
-## Architecture and boundaries
+```
+vault_custody_balance == active_tournament_pots
+                      + locked_defender_bonds
+                      + locked_challenger_bonds
+```
 
-- Frontend owns: UI, burner/wallet auth, live reads, and non-authoritative pre-flight checks.
-- Contract owns: tournament state, the deterministic score, the consensus-gated AI verdict,
-  endorsements, comments, leaderboard points, and settlement of the prize to the leader.
-- External sources own: the raw reference content, which validators re-fetch and normalize
-  independently rather than trusting any player's claim.
+The PAPITO rule keeps 100 percent of pots and bonds locked until the challenge window
+closes and every pending exploit challenge is resolved. Settlement reverts before the
+window closes or while a challenge is pending.
+
+### 3. Staked red-team exploit challenges and defender bonds
+
+- `submit_tactic(tournament_id, moniker, tactic_payload, defender_bond)` locks a defender
+  bond into the vault.
+- `challenge_defense_submission(submission_id, exploit_proof_url, challenger_bond)` locks a
+  matching challenger bond before the window closes.
+- `resolve_exploit_challenge_live(challenge_id)` fetches the exploit proof and runs live
+  consensus. A reproduced jailbreak slashes the defender bond to the challenger, refunds the
+  challenger bond, zeroes the score and disqualifies the submission. A failed challenge
+  forfeits the challenger bond to the defender.
+
+### 4. Discrete 4-anchor defense band
+
+Both evaluation paths fetch evidence with `gl.nondet.web.render(url, mode="text")`, snapshot
+all storage into locals before the non-deterministic block, and derive the standing with one
+shared pure helper, `_compute_defense_standing`:
+
+| Anchor | Defense band | Meaning |
+|---|---|---|
+| 100 | `IRONCLAD_IMMUNE` | Holds against the full adversarial corpus |
+| 75 | `HARDENED_PASS` | Minor leakage, no successful bypass |
+| 45 | `PARTIAL_LEAK_WARN` | Partial policy leak, still eligible to win |
+| 0 | `JAILBROKEN_SLASH` | Exploit reproduced, bond slashed and disqualified |
+
+Validators must agree exactly on `defense_band`, `robustness_anchor` and
+`exploit_reproduced`. The AI contribution is `anchor * 60 // 100`.
+
+### 5. One leader and settlement invariant
+
+`_sync_leader_if_evaluated` is called from `evaluate_submission_live`,
+`endorse_submission`, `resolve_exploit_challenge_live` and `settle_tournament`. Only
+evaluated, un-slashed submissions can lead, and the ranking and settlement winner always
+use:
+
+```
+total_score = min(100, deterministic_score + ai_verdict_score + endorsements * 2)
+```
+
+Post-settlement endorsements revert.
 
 ## Contract
 
 `contracts/aegis_arena.py`, pinned to the GenVM runner hash on line 1.
 
-Persistent structures: `Tournament`, `BattleSubmission`, `ArenaComment`.
+Persistent structures: `Tournament`, `BattleSubmission`, `ExploitChallenge`, `ArenaComment`.
 
 Write methods:
 
-- `create_tournament(title, challenge_brief, reference_url, mandatory_fact_token, prize_pool_points)`
-- `submit_tactic(tournament_id, moniker, tactic_payload)` (enforces the mandatory fact token and a deterministic 0..40 score; never takes the lead until live evaluation)
-- `evaluate_tactic_live(submission_id)` (the only path that marks a submission evaluated; validators fetch the reference URL and run `gl.eq_principle.prompt_comparative` for a 5-point-grid verdict)
-- `endorse_submission(submission_id)` (OPEN tournaments only, no self-endorsement, one per address, capped +2 bonus, keeps the leader in lockstep)
+- `faucet_or_deposit(amount)`
+- `transfer_tokens(to_hex, amount)`
+- `create_tournament(title, challenge_brief, reference_url, mandatory_fact_token, prize_pool_points, challenge_window_seconds)`
+- `submit_tactic(tournament_id, moniker, tactic_payload, defender_bond)`
+- `evaluate_submission_live(submission_id)` (the only path that assigns a defense standing)
+- `challenge_defense_submission(submission_id, exploit_proof_url, challenger_bond)`
+- `resolve_exploit_challenge_live(challenge_id)`
+- `endorse_submission(submission_id)` (OPEN only, no self, one per address, capped +2)
 - `post_arena_comment(tournament_id, submission_id, author_moniker, message, stance)`
-- `settle_tournament(tournament_id)` (creator or owner; requires a live-evaluated winner and pays the on-chain leader)
-- `cancel_tournament(tournament_id)` (creator or owner, empty tournaments only)
+- `settle_tournament(tournament_id)` (permissionless once the window closes and challenges resolve)
+- `cancel_tournament(tournament_id)` (permissionless; empty tournaments refund the pot, and stalled tournaments with no live leader and no pending challenge refund the pot plus every locked defender bond)
 
-View methods: `get_tournament`, `get_all_tournaments`, `get_tournament_submissions`,
-`get_tournament_comments`, `get_leaderboard`, `get_arena_stats`.
+View methods: `get_tournament`, `get_all_tournaments`, `get_submission`,
+`get_tournament_submissions`, `get_challenge`, `get_tournament_challenges`,
+`get_tournament_comments`, `get_tournament_bundle`, `get_leaderboard`, `get_token_balance`,
+`get_arena_stats`, `check_vault_invariants`.
 
-## Scoring model
-
-- Deterministic 0..40: mandatory-token emphasis, length efficiency, and structural richness.
-- AI verdict 0..60 on a 5-point grid: only through validator consensus on the live reference source, with validators required to agree on the exact quantized integer.
-- Total 0..100, clamped: `min(100, deterministic + ai_verdict + endorsements * 2)`. Endorsements add a capped community bonus, and the ranking score, stored leader and settlement winner all follow this one invariant.
+`get_tournament_bundle(tournament_id)` is the consolidated read used by the frontend so the
+initial page load stays at four RPC calls.
 
 ## Frontend
 
-`frontend/` is a Vite + React + TypeScript app using `genlayer-js`.
+`frontend/` is Vite + React + TypeScript + TailwindCSS + `lucide-react` +
+`canvas-confetti` + `genlayer-js`.
 
-- Dual wallet: a one-click burner identity persisted in localStorage, or a MetaMask / EIP-1193
-  connection. A "New Burner Identity" button makes it easy to test multi-player endorsement.
-- Live dashboard with on-chain stats, a network health indicator, and a contract badge linking
-  to the explorer.
-- Tournament explorer and live battle room with ranked submissions.
-- Tactical submission console with a real-time pre-flight check (mandatory-token presence and
-  character bounds) and a Quick Fill demo tactic.
-- Per-submission actions: a clear "Live Consensus Evaluated (Eligible to Win)" versus
-  "Awaiting Live AI Evaluation" badge, a "Trigger Live AI Consensus" button that is only
-  enabled for OPEN tournaments still awaiting evaluation, and an "Endorse" button that is
-  disabled once a tournament is SETTLED or CANCELLED.
-- On-chain discussion feed with stance badges and a comment composer.
-- Create-tournament modal with a preset scenario loader.
-- A live transaction lifecycle stepper: Signing, Broadcast to Studionet, Validator Consensus,
-  Finalized with an explorer link, then automatic state refresh.
+Three interactive Milestone v1 modules:
+
+1. **What-If Red-Team Exploit & Prize Slash Simulator**: sliders for pot, defender bond,
+   challenger bond, endorsements and robustness anchor, with live band, ranking and exact
+   AGT payout or slash distribution.
+2. **Red-Team Exploit Duel & Challenge Window Monitor**: defense vs exploit proof
+   inspection, window countdown, active challenge lock and PAPITO liability status.
+3. **Consensus & Prompt Inspector Drawer + Security Guard Lab**: the exact judge prompt and
+   comparative principle, the 4-anchor ladder, plus 1-click probes for premature settlement,
+   unevaluated leader claim, post-settlement endorsement and the vault invariant read.
+
+The frontend never passes a hand-typed ABI override and uses one consolidated bundle read per
+selected tournament. The Endorse button is disabled once a tournament is SETTLED or
+CANCELLED, and each submission card shows its live defense band or "Awaiting Live AI
+Evaluation".
+
+## Demo video
+
+`docs/demo-video-subtitled.mp4` (also copied to `frontend/public/demo-video-subtitled.mp4`)
+is a 48 second, 1280x720, H.264/AAC stereo walkthrough of the Milestone v1 modules with an
+original soundtrack generated by `tools/generate_soundtrack.py`.
+
+Regenerate:
+
+```bash
+python tools/generate_soundtrack.py
+cd frontend && npm run build && npm run dev
+# in another shell
+cd frontend && node tools/record_demo.mjs
+```
 
 ## Repository layout
 
 ```
-contracts/aegis_arena.py        the Intelligent Contract
-tests/test_aegis_arena_direct.py  55 direct-mode tests
+contracts/aegis_arena.py            the Milestone v1 Intelligent Contract
+tests/test_aegis_arena_direct.py    98 direct-mode tests
 tests/test_aegis_arena_integration.py  live studionet consensus tests
-tests/conftest.py               Windows os.unlink shim for direct mode
-scripts/deploy_studionet.py     deploy + seed + evidence collection
-scripts/make_logo.py            programmatic logo renderer
-evidence/studionet_deployment.json  on-chain deployment proof
-docs/adversarial-review.md      security review notes
-frontend/                        the live web app
+scripts/deploy_studionet.py         deploy, seed, guard reverts, evidence
+scripts/verify_evidence.py          four-way sha256 proof
+tools/generate_soundtrack.py        48s stereo soundtrack generator
+frontend/                           Vite + React + Tailwind dApp
+docs/demo-video-subtitled.mp4       tracked audio-backed demo video
+docs/evidence.md                    human-readable on-chain proof
+evidence/studionet_deployment.json  machine-readable on-chain proof
+docs/adversarial-review.md          security review notes
 ```
 
 ## Development
@@ -138,11 +180,12 @@ pip install -r requirements.txt
 genvm-lint check contracts/aegis_arena.py
 pytest tests/ -q                 # offline direct suite (integration is skipped by default)
 
-# live consensus suite (needs network to studionet)
+# live consensus suite
 RUN_STUDIONET_INTEGRATION=1 pytest tests/test_aegis_arena_integration.py -v -s
 
 # deploy and seed a fresh instance
 python scripts/deploy_studionet.py
+python scripts/verify_evidence.py <commit>
 
 # frontend
 cd frontend && npm install && npm run build
@@ -150,16 +193,23 @@ cd frontend && npm install && npm run build
 
 ## Security
 
-See `docs/adversarial-review.md`. Highlights: strict input bounds with floors and ceilings,
-rejection (not clamping) of out-of-range values, self-endorsement and duplicate-endorsement
-guards, prompt-injection defusing of all fetched and creator-supplied text, a single-shot
-consensus scoring path with a fixed 5-point verdict grid, a mandatory live-evaluation gate
-before settlement, one shared leader/settlement score invariant, and endorse/settle/cancel
-guards that freeze scores once a tournament leaves OPEN. The non-custodial design means the
-contract holds no external funds; points are a reputation ledger, and settlement transfers
-prize points to the live-evaluated on-chain leader only.
+See `docs/adversarial-review.md`. Highlights: exact validator agreement on the discrete
+defense band, anchor and exploit outcome, full vault conservation, defender and challenger
+bond races, challenge window and active challenge settlement locks, slashed submission
+disqualification, fail-closed LLM parsing, prompt injection defusing, and no owner or
+deterministic evaluation backdoor.
+
+## Deployment provenance
+
+- Tag: `milestone-v1` (and `studionet-v1`) at the commit that contains this exact
+  `contracts/aegis_arena.py`.
+- Contract file four-way sha256 (local LF, git blob, remote GitHub blob, on-chain code):
+  `095fbf906ad76d57e60069db005152172598f123c6042ed2aeb0e83afc25fab1`
+- Deployed commit: `COMMIT_PENDING`
+- Deploy tx: `0xcd11529b1eee7aced71fa7fc69287908ea647824e5f5ad5dd9b82cb8bafb0a38`
+- Full transaction table and guard reverts: `docs/evidence.md`.
 
 ## Tech stack
 
 GenLayer studionet, GenVM Python runner (pinned), `genlayer-js`, Vite, React, TypeScript,
-viem, deployed to GitHub Pages.
+TailwindCSS, `lucide-react`, `canvas-confetti`, viem, deployed to GitHub Pages.

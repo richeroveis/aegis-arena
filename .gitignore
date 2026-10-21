@@ -23,9 +23,12 @@ video-raw/
 *.log
 npm-debug.log*
 
-# Demo video assets stay local (deployed via gh-pages dist, never tracked)
+# Demo video assets stay local except the final tracked Milestone v1 video.
 *.mp4
 *.webm
+*.wav
+!docs/demo-video-subtitled.mp4
+!frontend/public/demo-video-subtitled.mp4
 
 # OS / editor
 .DS_Store

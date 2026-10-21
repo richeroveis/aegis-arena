@@ -9,6 +9,7 @@ export interface TournamentDraft {
   reference_url: string;
   mandatory_fact_token: string;
   prize_pool_points: number;
+  challenge_window_seconds: number;
 }
 
 const PRESET: TournamentDraft = {
@@ -18,6 +19,7 @@ const PRESET: TournamentDraft = {
   reference_url: "https://www.cisa.gov/topics/industrial-control-systems",
   mandatory_fact_token: "GRID RESILIENCE",
   prize_pool_points: 7500,
+  challenge_window_seconds: 300,
 };
 
 const EMPTY: TournamentDraft = {
@@ -26,6 +28,7 @@ const EMPTY: TournamentDraft = {
   reference_url: "",
   mandatory_fact_token: "",
   prize_pool_points: 5000,
+  challenge_window_seconds: 300,
 };
 
 interface Props {
@@ -51,7 +54,9 @@ export function CreateTournamentModal({ open, busy, stage, hash, onClose, onSubm
     draft.reference_url.startsWith("http") &&
     draft.mandatory_fact_token.trim().length >= 1 &&
     draft.prize_pool_points >= SCORE.prizeMin &&
-    draft.prize_pool_points <= SCORE.prizeMax;
+    draft.prize_pool_points <= SCORE.prizeMax &&
+    draft.challenge_window_seconds >= SCORE.windowMin &&
+    draft.challenge_window_seconds <= SCORE.windowMax;
 
   return (
     <div className="modal-back" onClick={busy ? undefined : onClose}>
@@ -96,11 +101,18 @@ export function CreateTournamentModal({ open, busy, stage, hash, onClose, onSubm
           maxLength={64}
         />
 
-        <label>Prize pool points ({SCORE.prizeMin}..{SCORE.prizeMax})</label>
+        <label>Prize pool AGT ({SCORE.prizeMin}..{SCORE.prizeMax}, debited into the vault)</label>
         <input
           type="number"
           value={draft.prize_pool_points}
           onChange={(e) => set("prize_pool_points", Number(e.target.value))}
+        />
+
+        <label>Challenge window seconds ({SCORE.windowMin}..{SCORE.windowMax})</label>
+        <input
+          type="number"
+          value={draft.challenge_window_seconds}
+          onChange={(e) => set("challenge_window_seconds", Number(e.target.value))}
         />
 
         <TxStepper stage={stage} hash={hash} />

@@ -1,204 +1,191 @@
-# AegisArena Adversarial Security Review
+# AegisArena Milestone v1 Adversarial Security Review
 
-Reviewer posture: every party that can call the contract is treated as
-adversarial, including tournament creators, submitting players, endorsers,
-commenters, and the content returned by any fetched `reference_url`.
+Reviewer posture: every party that can call the contract is adversarial, including
+tournament creators, defenders, red-team challengers, endorsers, commenters, and any
+content returned by a fetched benchmark or exploit proof URL.
 
-## 0. Steward fixes (reviewer "zoefunds")
+## 0. Steward red lines
 
-This release resolves every point raised by the steward. Each fix is pinned by a
-named direct test in `tests/test_aegis_arena_direct.py` and exercised on live
-studionet by `tests/test_aegis_arena_integration.py` and
-`scripts/deploy_studionet.py`.
+1. Zero owner or creator bypass. There is no `owner` field and no deterministic scoring
+   method. The only path that marks a submission evaluated and assigns a defense band is
+   `evaluate_submission_live`, which runs the neutral live consensus evaluation.
+   `settle_tournament` is permissionless and pays only the invariant-derived leader.
+   Proven by `test_no_owner_or_deterministic_backdoor_exists` and
+   `test_creator_cannot_bypass_live_evaluation`.
+2. Mandatory live consensus before leadership or payout. A submission cannot lead, win, or
+   receive the prize until it has completed `evaluate_submission_live`. Settlement reverts
+   with `cannot settle without a live-evaluated, un-slashed winning submission` otherwise.
+   Proven by `test_settle_requires_live_evaluated_leader`.
+3. One consistent ranking and settlement invariant. The stored leader, `best_score` and the
+   settlement winner all come from `_sync_leader_if_evaluated`, which only considers
+   evaluated, un-slashed submissions and uses
+   `min(100, deterministic_score + ai_verdict_score + endorsements * 2)`. Proven by
+   `test_evaluate_makes_submission_leader`, `test_endorse_adds_bonus_and_syncs_leader` and
+   `test_settle_winner_matches_stored_leader`.
+4. Score-changing endorsements are frozen after settlement. Proven by
+   `test_endorse_rejected_after_settlement`.
 
-1. No creator/owner scoring bypass. `score_tactic_deterministic` is deleted from
-   the contract. The only path that flips `submission.evaluated` to True and sets
-   `ai_verdict_score` is `evaluate_tactic_live`, which runs the neutral live
-   GenLayer consensus evaluation. Proven by
-   `test_no_creator_or_owner_scoring_bypass_exists`.
-2. Live consensus is required before settlement. `settle_tournament` re-runs the
-   leader invariant and reverts with
-   `"cannot settle tournament without a live-evaluated winning submission"` unless
-   the winning submission completed `evaluate_tactic_live`. Proven by
-   `test_cannot_settle_without_live_evaluated_submission` and
-   `test_unevaluated_submission_with_endorsements_cannot_become_leader_or_win`.
-3. One consistent score invariant. The stored ranking score and the settlement
-   winner are always the same value:
-   `total_score = min(100, deterministic_score + ai_verdict_score + endorsements * 2)`.
-   A single helper `_sync_leader_if_evaluated` recomputes `best_score` and
-   `current_leader` from that invariant, considering only live-evaluated
-   submissions and breaking ties by earliest `submission_id`. It runs at the end
-   of `evaluate_tactic_live` and `endorse_submission`, and again inside
-   `settle_tournament`. Proven by
-   `test_endorsement_updates_stored_leader_and_settlement_winner_consistently`
-   and `test_evaluate_makes_the_submission_the_leader`.
-4. Endorsements are frozen once a tournament leaves OPEN. `endorse_submission`
-   requires `status == "OPEN"` and reverts with
-   `"cannot endorse submission after tournament is settled or cancelled"`
-   otherwise, so no post-settlement endorsement can move the winner. Proven by
-   `test_endorse_reverts_after_tournament_settled_or_cancelled`.
-5. Rock-solid verdict consensus. The LLM rubric score is snapped onto a fixed
-   5-point grid (`0, 5, 10, ..., 60`) inside `evaluate_tactic_live`, and the
-   `gl.eq_principle.prompt_comparative` principle requires validators to agree on
-   the exact same quantized integer. Proven by
-   `test_evaluate_quantizes_verdict_to_five_point_grid`.
-
-## 1. State machine table
+## 1. State machine
 
 Tournament lifecycle:
 
-| Status | create_tournament | submit_tactic | evaluate_tactic_live | endorse_submission | post_arena_comment | settle_tournament | cancel_tournament |
-|--------|-------------------|---------------|----------------------|--------------------|--------------------|-------------------|-------------------|
-| OPEN | creates OPEN | allowed (token gate); records score, never takes the lead | allowed (not evaluated); makes the submission eligible to lead | allowed (OPEN only, non self, unique); recomputes score and re-syncs leader | allowed | allowed only if a live-evaluated leader exists | allowed if entry_count == 0 |
-| SETTLED | n/a | rejected | rejected (not OPEN) | rejected (not OPEN) | allowed | rejected (not OPEN) | rejected (not OPEN) |
-| CANCELLED | n/a | rejected | rejected (not OPEN) | rejected (not OPEN) | allowed | rejected (not OPEN) | rejected (not OPEN) |
+| Status | submit_tactic | evaluate_submission_live | challenge_defense_submission | resolve_exploit_challenge_live | endorse_submission | settle_tournament | cancel_tournament |
+|---|---|---|---|---|---|---|---|
+| OPEN, window open | allowed with bond | allowed if window open | allowed with matching bond | allowed for a pending challenge | allowed | rejected (window open) | allowed only if empty |
+| OPEN, window closed | rejected | rejected | rejected | allowed for a pending challenge | allowed (scores still rematerialize) | allowed only if no pending challenge and a live leader exists | allowed if empty, or stalled with no live leader and no pending challenge |
+| SETTLED | rejected | rejected | rejected | rejected | rejected | rejected | rejected |
+| CANCELLED | rejected | rejected | rejected | rejected | rejected | rejected | rejected |
 
-Transitions:
-- OPEN to SETTLED via `settle_tournament` (creator or owner, entry_count > 0, and
-  a live-evaluated submission must exist).
-- OPEN to CANCELLED via `cancel_tournament` (creator or owner, entry_count == 0).
-- No transition leaves SETTLED or CANCELLED.
+Challenge lifecycle: `PENDING` to `RESOLVED_SLASHED` (exploit reproduced, defender bond
+paid to challenger) or `RESOLVED_UPHELD` (defense holds, challenger bond forfeited to the
+defender). No transition leaves a resolved challenge.
 
-## 2. Liveness: no stuck state
+## 2. Fund custody and liveness
 
-The contract holds no external value (no GEN, no ERC token). `player_points` is
-a non-monetary reputation ledger minted by protocol rules, and
-`prize_pool_points` is an integer award recorded to that ledger on settlement.
-There is therefore no locked-funds or overdraft path.
+The contract now holds real AGT test custody. `vault_custody_balance` is the locked
+liability vault:
 
-Every OPEN tournament has an exit:
-- If it gains at least one live-evaluated entry, the creator or owner can
-  `settle_tournament`.
-- If it stays empty, the creator or owner can `cancel_tournament`.
-- An OPEN tournament with only unevaluated entries cannot be settled (it would
-  pay an unverified winner), so the creator either runs `evaluate_tactic_live`
-  on an entry, keeps it open for evaluation, or leaves it. Because there are no
-  funds locked, this is not a stuck-funds condition. `cancel_tournament` requires
-  `entry_count == 0`, so a creator cannot erase a live tournament with
-  participants to dodge a payout.
+```
+vault_custody_balance == active_tournament_pots
+                      + locked_defender_bonds
+                      + locked_challenger_bonds
+```
 
-## 3. Race conditions between competing transitions
+`check_vault_invariants()` returns every term and an `invariant_ok` flag. It is asserted
+after funding, defense submission, challenge staking, challenge resolution and settlement
+in `test_create_locks_prize_in_vault`, `test_submit_locks_defender_bond_in_vault`,
+`test_challenge_locks_challenger_bond_in_vault`, `test_settle_releases_all_vault_liabilities`
+and `test_vault_invariant_view_shape`.
 
-- `settle_tournament` vs `cancel_tournament`: mutually exclusive by
-  `entry_count` (settle needs > 0, cancel needs == 0) and both need OPEN. No
-  ordering ambiguity.
-- `evaluate_tactic_live` double call: guarded by `submission.evaluated`; the
-  second call reverts `"submission already evaluated"`. Proven by
-  `test_evaluate_rejects_double`.
-- `endorse_submission` double call: guarded by `has_endorsed` keyed by
-  `(submission_id, sender)`. Duplicate rejects.
-- Post-settlement mutation: `settle_tournament` recomputes the leader from the
-  score invariant and then flips status to SETTLED; after that, `submit_tactic`,
-  `evaluate_tactic_live` and `endorse_submission` all reject a non-OPEN
-  tournament, so the winner can no longer move.
-- Endorse-then-settle and settle-then-endorse: `_sync_leader_if_evaluated` is
-  re-run inside `settle_tournament`, so a settled winner always equals the last
-  invariant-consistent leader; and `endorse_submission` refuses to run once the
-  status is not OPEN, so no endorsement can race a settlement.
+`token_balances` is the liquid AGT ledger for faucet credits, transfers and prize receipts.
+`faucet_or_deposit` mints test credit into that ledger without touching the locked vault.
+`transfer_tokens` moves liquid credit only and never changes the vault
+(`test_transfer_does_not_change_vault`).
+
+The PAPITO max-liability rule keeps 100 percent of the pot, defender bonds and challenger
+bonds locked until the challenge window closes and every challenge is resolved. Settlement
+reverts while the window is open (`test_settle_reverts_before_challenge_window_closes`) and
+while a challenge is pending (`test_settle_blocked_while_challenge_open`).
+
+Liveness recovery: an OPEN tournament whose entries were never evaluated after the window
+closes can never settle. `cancel_tournament` is permissionless and, once the window is
+closed, no challenge is pending and no live-evaluated leader exists, it refunds the pot to
+the creator and every locked defender bond to its defender
+(`test_cancel_stalled_refunds_pot_and_bonds`). The recovery is blocked as soon as a live
+leader exists (`test_cancel_stalled_rejected_with_live_leader`) or a challenge is pending
+(`test_cancel_stalled_rejected_with_open_challenge`), so a creator cannot rug an evaluated
+winner. An empty tournament can also be cancelled permissionlessly at any time
+(`test_cancel_empty_is_permissionless`).
+
+## 3. Race conditions
+
+- `challenge_defense_submission` vs `resolve_exploit_challenge_live`: a submission accepts
+  only one open challenge (`active_challenge_id`), and resolution requires `PENDING`.
+  Proven by `test_challenge_rejects_duplicate_open` and `test_resolve_rejects_non_pending`.
+- `settle_tournament` vs an open challenge: settlement requires
+  `active_challenges == 0`, so a pending challenge always blocks payout.
+- `settle_tournament` vs the window clock: settlement uses `now >= challenge_window_clock`,
+  and submission, evaluation and challenge filing use `now < challenge_window_clock`, so
+  the guards are mutually exclusive at the boundary
+  (`test_settle_boundary_opens_at_exact_clock`).
+- Double settlement: SETTLED blocks a second call (`test_double_settle_rejected`).
+- Double evaluation: `evaluated` blocks a second call (`test_evaluate_rejects_double`).
+- Post-settlement endorsement: status guard blocks any score change
+  (`test_endorse_rejected_after_settlement`).
 
 ## 4. Accounting invariants
 
-Invariant enforced: the leaderboard score, the stored leader, and the settlement
-winner are one and the same deterministic value.
+- A submission is credited once: `evaluated` is flipped only in
+  `evaluate_submission_live`, and a slashed submission can no longer be evaluated
+  (`test_slashed_submission_cannot_be_evaluated`).
+- The defender bond is released exactly once: either refunded at settlement or paid to a
+  successful challenger, then `bond_locked` is set to False.
+- A challenger bond is released exactly once: refunded on a successful slash or forfeited
+  to the defender on an upheld challenge.
+- Settlement pays `prize_pool_points` once because SETTLED blocks a second call.
+- Scores are clamped: deterministic 0..40, AI contribution 0..60, total 0..100.
 
-- `evaluated` is set to True only by `evaluate_tactic_live`; after True no path
-  rewrites `ai_verdict_score`.
-- `total_score` always equals `min(100, deterministic_score + ai_verdict_score +
-  endorsements * 2)`, recomputed from first principles in both
-  `evaluate_tactic_live` and `endorse_submission`.
-- `best_score` and `current_leader` are derived solely by
-  `_sync_leader_if_evaluated`, which scans every live-evaluated submission and
-  picks the highest `total_score` (earliest `submission_id` wins a tie). An
-  unevaluated submission can never lead, regardless of endorsements.
-- `settle_tournament` pays exactly `current_leader`, which after the final
-  `_sync_leader_if_evaluated` is guaranteed to be a live-evaluated submission.
-- `settle_tournament` credits `prize_pool_points` once because SETTLED blocks a
-  second settle, and it increments `player_wins` once for the same reason.
-- Every score is clamped: deterministic 0..40, AI verdict 0..60 on a 5-point
-  grid, total 0..100.
+## 5. Input validation
 
-## 5. Input validation at every entry point
-
-- `title` 1..100, `challenge_brief` 1..1000, `mandatory_fact_token` 1..64,
-  all rejected (not clamped) when out of range.
-- `reference_url` 8..512, must start with `http://` or `https://`, and is
-  rejected if it contains whitespace or control characters.
-- `prize_pool_points` bounded 100..1000000 with both a floor and a ceiling.
-- `moniker` 1..32, `tactic_payload` 10..1500, `message` 1..280.
-- `stance` rejected unless it is one of COMMEND, CHALLENGE, ANALYSIS.
-- Access control: `settle` and `cancel` are restricted to the tournament creator
-  or contract owner; scoring is restricted to the neutral consensus path.
-- Cross-object consistency: `post_arena_comment` rejects a submission that does
-  not belong to the stated tournament; `endorse_submission` looks up the parent
-  tournament and requires it to be OPEN.
+- `title` 1..100, `challenge_brief` 1..1000, `mandatory_fact_token` 1..64.
+- `reference_url` and `exploit_proof_url` 8..512, must start with `http://` or
+  `https://`, and reject spaces or control characters.
+- `prize_pool_points` 100..1000000, `defender_bond` 10..1000000, `faucet` 1..1000000.
+- `challenge_window_seconds` 30..86400 with both a floor and a ceiling
+  (`test_create_rejects_short_challenge_window`,
+  `test_create_rejects_long_challenge_window`).
+- `moniker` 1..32, `tactic_payload` 10..1500, `message` 1..280, `stance` restricted.
+- Address strings are parsed into `Address` and reject malformed hex.
 
 ## 6. Consensus safety (GenLayer)
 
-- `evaluate_tactic_live` snapshots all storage (brief, url, token, payload,
-  deterministic score and endorsements) before the non-deterministic block, and
-  performs zero storage reads inside `gl.eq_principle.prompt_comparative`.
-- All fetched and supplied text (reference page, payload, brief, and the
-  creator-controlled mandatory token) is control-character stripped and
-  delimiter defused before it is interpolated into the judge prompt.
-- The verdict is quantized onto the fixed 5-point grid, and the equivalence
-  principle requires validators to agree on the exact quantized integer
-  `ai_verdict_score` (only the rationale may differ). This removes the old
-  tolerance band that let different validators settle on different scores, so the
-  value that drives the leader and the winner is one deterministic integer.
-- Fail-closed: if the reference page cannot be fetched or the LLM returns a
-  non-parseable score, the transaction raises a UserError and applies no state
-  change, so a submission cannot be silently awarded.
+- `evaluate_submission_live` and `resolve_exploit_challenge_live` snapshot every storage
+  value into plain locals before the non-deterministic block. The closure performs zero
+  storage reads. Proven structurally and by the direct tests that run the leader path.
+- Both paths fetch evidence with `gl.nondet.web.render(url, mode="text")`, strip control
+  characters and defuse delimiter injection before interpolation.
+- The robustness anchor is quantized onto the discrete ladder `0, 45, 75, 100`, and
+  `_compute_defense_standing` derives the band inside the closure. The principle requires
+  exact agreement on `defense_band`, `robustness_anchor` and `exploit_reproduced`.
+- A JAILBROKEN verdict is only possible when a challenger supplied exploit proof and the
+  judge reproduced it. Benchmark evaluation cannot declare a jailbreak.
+- Fail closed: missing or non-numeric anchors raise a UserError and apply no state change
+  (`test_evaluate_fails_closed_on_missing_anchor`,
+  `test_evaluate_fails_closed_on_non_dict`,
+  `test_evaluate_fails_closed_on_non_numeric_anchor`).
 
 ## 7. Findings
 
-FIXED - Creator-controlled token injection. The mandatory token was
-interpolated raw into the judge prompt, letting a creator smuggle wrapper
-closing tags. Now defused with the same routine as the other inputs.
-Proven by `test_evaluate_survives_malicious_token`.
+FIXED - Creator and owner scoring bypass. The old `score_tactic_deterministic` and the
+`owner` field are removed. Only `evaluate_submission_live` can set a defense standing.
+Proven by `test_no_owner_or_deterministic_backdoor_exists`.
 
-FIXED - Creator/owner scoring bypass. `score_tactic_deterministic` let a creator
-or owner mark a submission evaluated and set its verdict score without live
-consensus, and could be used to pre-empt the neutral path. The method is removed;
-only `evaluate_tactic_live` can mark a submission evaluated. Proven by
-`test_no_creator_or_owner_scoring_bypass_exists`.
+FIXED - Unverified settlement. Settlement requires a live-evaluated, un-slashed leader and
+re-runs the invariant immediately before paying. Proven by
+`test_settle_requires_live_evaluated_leader`.
 
-FIXED - Settlement on an unverified winner. `settle_tournament` previously paid
-`current_leader` even when no submission had completed live consensus. It now
-recomputes the invariant and reverts unless a live-evaluated winner exists.
-Proven by `test_cannot_settle_without_live_evaluated_submission`.
+FIXED - Leader and winner divergence. Endorsements and challenge re-audits both call
+`_sync_leader_if_evaluated`, so the ranking and settlement winner never disagree. Proven by
+`test_endorse_adds_bonus_and_syncs_leader` and `test_settle_winner_matches_stored_leader`.
 
-FIXED - Leader/winner score divergence. Previously a submission could take the
-lead at submission time, and endorsements updated `total_score` without updating
-the leader, so the ranking and the settlement winner could disagree. Now the lead
-is only ever held by a live-evaluated submission and `_sync_leader_if_evaluated`
-keeps `best_score` and `current_leader` equal to the invariant on every score
-change. Proven by
-`test_endorsement_updates_stored_leader_and_settlement_winner_consistently` and
-`test_unevaluated_submission_with_endorsements_cannot_become_leader_or_win`.
+FIXED - Post-settlement score changes. Endorsements are frozen after settlement. Proven by
+`test_endorse_rejected_after_settlement`.
 
-FIXED - Post-settlement endorsement. `endorse_submission` now requires the parent
-tournament to be OPEN, so an endorsement can never change a score or the winner
-after settlement or cancellation. Proven by
-`test_endorse_reverts_after_tournament_settled_or_cancelled`.
+FIXED - Unbacked bonds and prizes. All pot, defender bond and challenger bond movements are
+mirrored in `vault_custody_balance`, and the invariant view proves conservation. Proven by
+the vault tests listed in section 2.
+
+FIXED - Successful exploit challenge. A reproduced jailbreak slashes the defender bond to
+the challenger, refunds the challenger bond, zeroes the submission score and disqualifies
+it from leadership. Proven by `test_resolve_slash_moves_bond_and_disqualifies` and
+`test_resolve_slash_pays_challenger_both_bonds`.
+
+FIXED - Frivolous challenge penalty. A failed challenge forfeits the challenger bond to the
+defender while the defender bond stays locked. Proven by
+`test_resolve_upheld_forfeits_challenger_bond_to_defender`.
+
+FIXED - Stalled tournament lockup. An OPEN tournament whose entries were never evaluated
+after the window closed had no exit, which would lock the pot and defender bonds forever.
+`cancel_tournament` now has a permissionless stalled recovery that refunds the pot and every
+locked defender bond, and is blocked while a live leader or a pending challenge exists.
+Proven by `test_cancel_stalled_refunds_pot_and_bonds`,
+`test_cancel_stalled_rejected_with_live_leader` and
+`test_cancel_stalled_rejected_with_open_challenge`.
 
 ## 8. Open items (honest status)
 
-OPEN - Validator agreement is not proven by direct tests. Direct mode runs the
-leader path only, so the mock-based `evaluate_tactic_live` tests confirm the
-leader logic and prompt construction but do NOT confirm that independent
-validators reach consensus on the live web fetch and the quantized score. This is
-covered by the studionet integration test in
-`tests/test_aegis_arena_integration.py` and the live seeded deployment, which
-must be run against the real network.
+OPEN - Direct mode proves the leader path only. It does not prove that independent
+validators agree on the live web fetch and the LLM verdict. That is covered by the live
+studionet integration test and the seeded deployment, which record `FINALIZED` and
+`MAJORITY_AGREE` transactions in `evidence/studionet_deployment.json`.
 
-OPEN - Reputation farming is inherent, not a bug. Because `player_points` is an
-unbounded non-monetary ledger, a set of colluding burner accounts could inflate
-points through many submissions and mutual endorsements. There is no financial
-loss, but the leaderboard is a trust signal. If points ever gain monetary
-value, cap per-address point minting or require staking; that is out of scope
-for this non-custodial release.
+OPEN - Exact consensus can occasionally end in `MAJORITY_DISAGREE`. That is a clean
+rollback with no state change, and the deploy script and integration test retry the
+transaction until validators converge.
 
-OPEN - `reference_url` is fetched by validators' web renderer. The contract
-trusts the GenLayer web sandbox for network isolation. It cannot itself prevent
-a creator from pointing at a slow or hostile page; the render is truncated to
-5000 characters and defused, and any fetch failure reverts rather than awarding.
+OPEN - Reputation farming remains possible because `player_points` is a non-monetary
+ledger. If points ever gain monetary value, cap per-address minting or require staking.
+
+OPEN - The reference and exploit URLs are fetched by the validators' web sandbox. The
+contract truncates renders to 5000 characters, defuses delimiters and fails closed, but it
+cannot stop a creator from pointing at a slow or hostile page.

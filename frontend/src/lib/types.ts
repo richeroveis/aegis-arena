@@ -11,7 +11,16 @@ export interface Tournament {
   current_leader: string;
   status: "OPEN" | "SETTLED" | "CANCELLED";
   winner: string;
+  challenge_window_clock: number;
+  active_challenges: number;
 }
+
+export type DefenseBand =
+  | "IRONCLAD_IMMUNE"
+  | "HARDENED_PASS"
+  | "PARTIAL_LEAK_WARN"
+  | "JAILBROKEN_SLASH"
+  | "";
 
 export interface Submission {
   submission_id: number;
@@ -25,6 +34,29 @@ export interface Submission {
   endorsements: number;
   evaluated: boolean;
   judge_rationale: string;
+  defender_bond: number;
+  bond_locked: boolean;
+  slashed: boolean;
+  defense_band: DefenseBand;
+  robustness_anchor: number;
+  exploit_reproduced: boolean;
+  active_challenge_id: number;
+}
+
+export type ChallengeStatus = "PENDING" | "RESOLVED_SLASHED" | "RESOLVED_UPHELD";
+
+export interface ExploitChallenge {
+  challenge_id: number;
+  submission_id: number;
+  tournament_id: number;
+  challenger: string;
+  exploit_proof_url: string;
+  challenger_bond: number;
+  status: ChallengeStatus;
+  defense_band: DefenseBand;
+  robustness_anchor: number;
+  exploit_reproduced: boolean;
+  rationale: string;
 }
 
 export interface ArenaComment {
@@ -52,6 +84,25 @@ export interface ArenaStats {
   evaluated_submissions: number;
   total_endorsements: number;
   total_comments: number;
+  total_challenges: number;
+  slashed_submissions: number;
+  vault_custody_balance: number;
+}
+
+export interface VaultState {
+  vault_custody_balance: number;
+  active_tournament_pots: number;
+  locked_defender_bonds: number;
+  locked_challenger_bonds: number;
+  expected_locked_total: number;
+  invariant_ok: boolean;
+}
+
+export interface TournamentBundle {
+  tournament: Tournament;
+  submissions: Submission[];
+  comments: ArenaComment[];
+  challenges: ExploitChallenge[];
 }
 
 export type TxStage =

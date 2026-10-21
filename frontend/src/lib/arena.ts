@@ -3,13 +3,13 @@ import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 import { CONTRACT_ADDRESS } from "../config";
 import type {
-  ArenaComment,
   ArenaStats,
   LeaderRow,
-  Submission,
   Tournament,
+  TournamentBundle,
   TxResult,
   TxStage,
+  VaultState,
 } from "./types";
 
 // A single read client is enough: views need no signature.
@@ -63,31 +63,38 @@ export async function switchWalletToStudionet(client: ReturnType<typeof createCl
 }
 
 // ---- views ----
+// Initial page load stays at four RPC calls: stats, tournaments, leaderboard
+// and one consolidated bundle for the auto-selected tournament. No hand-typed
+// ABI is ever passed; genlayer-js resolves the contract interface itself.
 export const readStats = () =>
   readClient.readContract({ address: ADDR, functionName: "get_arena_stats", args: [] }) as unknown as Promise<ArenaStats>;
 
 export const readTournaments = () =>
   readClient.readContract({ address: ADDR, functionName: "get_all_tournaments", args: [] }) as unknown as Promise<Tournament[]>;
 
-export const readTournament = (id: number) =>
-  readClient.readContract({ address: ADDR, functionName: "get_tournament", args: [id] as AnyArgs }) as unknown as Promise<Tournament>;
-
-export const readSubmissions = (id: number) =>
-  readClient.readContract({
-    address: ADDR,
-    functionName: "get_tournament_submissions",
-    args: [id] as AnyArgs,
-  }) as unknown as Promise<Submission[]>;
-
-export const readComments = (id: number) =>
-  readClient.readContract({
-    address: ADDR,
-    functionName: "get_tournament_comments",
-    args: [id] as AnyArgs,
-  }) as unknown as Promise<ArenaComment[]>;
-
 export const readLeaderboard = () =>
   readClient.readContract({ address: ADDR, functionName: "get_leaderboard", args: [] }) as unknown as Promise<LeaderRow[]>;
+
+export const readBundle = (id: number) =>
+  readClient.readContract({
+    address: ADDR,
+    functionName: "get_tournament_bundle",
+    args: [id] as AnyArgs,
+  }) as unknown as Promise<TournamentBundle>;
+
+export const readTokenBalance = (address: string) =>
+  readClient.readContract({
+    address: ADDR,
+    functionName: "get_token_balance",
+    args: [address] as AnyArgs,
+  }) as unknown as Promise<number | bigint>;
+
+export const readVaultInvariants = () =>
+  readClient.readContract({
+    address: ADDR,
+    functionName: "check_vault_invariants",
+    args: [],
+  }) as unknown as Promise<VaultState>;
 
 // ---- writes with a live lifecycle stepper ----
 export async function runWrite(
